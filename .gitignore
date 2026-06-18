@@ -9,8 +9,8 @@ __pycache__/
 .venv/
 venv/
 
-logs/
-data_csv/
+logs/*
+!logs/README.md
 
 *.sqlite
 *.sqlite3
