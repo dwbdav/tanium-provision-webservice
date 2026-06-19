@@ -1,0 +1,4 @@
+#cloud-config
+password: %AdminPassword%
+runcmd:
+- [ bash, /_t/provision-linux.sh ]

@@ -1,0 +1,544 @@
+#
+# Sample PowerShell module for interacting with the Tanium Provision web service endpoint.
+#
+# Copyright (c) Tanium
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+
+Write-Host "TaniumProvision module 10.9.71.0"
+
+function Set-TaniumProvisionConnection
+{
+<#
+.SYNOPSIS
+    Sets the Tanium server name and API token to be used for subsequent requests.
+ 
+.DESCRIPTION
+    Specifies the Tanium server name and API token to be used for all subsequent API requests to Tanium Provision.
+
+.PARAMETER ServerURI
+The Tanium server URI (e.g. "https://ts1.contoso.com").
+
+.PARAMETER Token
+    The Tanium API token string to be used.
+ 
+.EXAMPLE
+    Set-TaniumProvisionToken -Token $token
+ 
+.OUTPUTS
+    None.
+  
+#>
+
+    [cmdletbinding()]  
+    Param(
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [String]$ServerURI,
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [String]$Token,
+        [Parameter(Mandatory=$false)]
+        [Switch]$DisableCertificateValidation
+    )
+
+    Process {
+        $script:TPURI = $ServerURI
+        $script:TPTOKEN = $Token
+
+        if ($DisableCertificateValidation) {
+            # Logic to trust all certs (ignore TLS errors from Tanium PXE)
+            try {
+                Add-Type @"
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+public class TrustAllCertsPolicy : ICertificatePolicy {
+    public bool CheckValidationResult(
+        ServicePoint srvPoint, X509Certificate certificate,
+        WebRequest request, int certificateProblem) {
+        return true;
+    }
+}
+"@
+                [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+            }
+            catch {
+                Write-Host "SSL check already bypassed"
+            }
+        }
+    }
+}
+
+function Get-TaniumProvisionBundle
+{
+<#
+.SYNOPSIS
+    Gets one or more Tanium Provision bundles.
+ 
+.DESCRIPTION
+    Gets one or more Tanium Provision bundles.  If no ID is specified, all bundles will be returned.
+ 
+.PARAMETER ID
+    The bundle ID to be retrieved.
+ 
+.EXAMPLE
+    Get-TaniumProvisionBundle
+
+.EXAMPLE
+    Get-TaniumProvisionBundle -ID 10
+     
+.OUTPUTS
+    One or more OS bundle objects.
+  
+#>
+
+    [cmdletbinding()]  
+    Param(
+        [Parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true)]
+        [Int32] $ID = -1
+    )
+
+    Process {
+        if ($ID -ne -1) {
+            $uri = "$TPURI/plugin/products/provision/v1/bundles/$ID"
+        } else {
+            $uri = "$TPURI/plugin/products/provision/v1/bundles"
+        }
+        $response = Invoke-WebRequest -Uri $uri -Method GET -ContentType "application/json" -UseBasicParsing -Headers @{
+            session = $TPTOKEN
+        }
+        $json = $response | ConvertFrom-Json
+        if ($ID -ne -1) {
+            $json
+        } else {
+            $json.bundles
+        }
+    }
+}
+
+
+function Set-TaniumProvisionBundle
+{
+<#
+.SYNOPSIS
+    Modifies the specified Tanium Provision OS bundle.
+ 
+.DESCRIPTION
+    Modifies the specified Tanium Provisoin OS bundle.
+ 
+.PARAMETER ID
+    The bundle ID to be modified.
+
+.PARAMETER FileType
+    The OS bundle file to be modified.
+
+.PARAMETER FilePath
+    The path to the file to be uploaded.
+
+.EXAMPLE
+    Set-TaniumProvisionBundle -ID 10 -FileType FILE_TYPE_CLIENT -FilePath C:\1-windows-installers-tanium-installer-bundle-1.12.158.0000.zip
+
+.EXAMPLE
+    Get-TaniumProvisionBundle | ? {$_.platform -eq "BUNDLE_PLATFORM_WINDOWS" -and $_.architecture -eq "amd64" } | Set-TaniumProvisionBundle -FileType FILE_TYPE_ADK -FilePath '.\adk_arm64.zip' | Format-Table
+
+.EXAMPLE
+    Get-TaniumProvisionBundle | ? {$_.platform -eq "BUNDLE_PLATFORM_WINDOWS" } | Set-TaniumProvisionBundle -FileType FILE_TYPE_CLIENT -FilePath '.\1-windows-installers-tanium-installer-bundle-1.12.158.0000.zip' | Format-Table
+
+.OUTPUTS
+    Updated OS bundle object.
+  
+#>
+
+    [cmdletbinding()]  
+    Param(
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [Int32] $ID,
+        [Parameter(ParameterSetName='FileType', Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [ValidateSet("FILE_TYPE_OSIMAGE", "FILE_TYPE_CLIENT", "FILE_TYPE_ADK", "FILE_TYPE_SCRIPTS", "FILE_TYPE_UNATTEND", "FILE_TYPE_CLOUD_INIT")]
+        [String] $FileType,
+        [Parameter(ParameterSetName='FileType', Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [String] $FilePath
+    )
+
+    Process {
+
+        # Get the specified OS bundle
+        $bundle = Get-TaniumProvisionBundle -ID $ID
+        switch ($PSCmdlet.ParameterSetName) {
+            "FileType" {
+                # Make sure curl.exe is available
+                if (-not (Test-Path "c:\windows\system32\curl.exe")) {
+                    throw "Unable to find curl.exe needed to upload the specified file."
+                }
+                # Upload using curl to the tempfile API
+                $uri = "$TPURI/plugin/products/provision/v1/tempfile/create"
+                $fileName = Split-Path $FilePath -Leaf
+                $response = c:\windows\system32\curl.exe -H "session: $TPTOKEN" -H "Content-Type: multipart/form-data" -X POST -F "FileName=$fileName" -F "File=@$FilePath" -k $uri -s
+                try {
+                    $tempFile = $response | ConvertFrom-Json
+                } catch {
+                    throw "Could not decode json in response: $($response)"
+                }
+                if ( -not $tempFile.Id ) {
+                    throw "Failed to upload file: $($response)"
+                }
+                # Update OS bundle to use that tempfile
+                $newFiles = @()
+                $found = $false
+                $bundle.files | ForEach-Object {
+                    if ($_.type -eq $FileType) {
+                        # Update this file
+                        $found = $true
+                        $newFiles += [PSCustomObject]@{ "temp_file_id" = "$($tempFile.id)"; "type" = $_.type }
+                    } else {
+                        # Keep the existing file
+                        $newFiles += [PSCustomObject]@{ "temp_file_id" = "$($_.temp_file_id)"; "type" = $_.type }
+                    }
+                }
+                if (-not $found) {
+                    # Add this file
+                    $newFiles += [PSCustomObject]@{ "temp_file_id" = "$($tempFile.id)"; "type" = $_.type }
+                }
+                $bundle.files = $newFiles
+                $bundle.PSObject.Properties.Remove("id")
+                $bundle.PSObject.Properties.Remove("meta")
+                $bundle.PSObject.Properties.Remove("status")
+                $bundle.PSObject.Properties.Remove("targets")
+                $bundle.PSObject.Properties.Remove("errorReasons")
+                $details = $bundle | ConvertTo-Json
+                $body = "{`"id`": `"$ID`", `"details`": $details }"
+                # Post the changes
+                $uri = "$TPURI/plugin/products/provision/v1/bundles"
+                $response = Invoke-WebRequest -Uri $uri -Method PUT -ContentType "application/json" -UseBasicParsing -Body $body -Headers @{
+                    session = $TPTOKEN
+                }
+                # Re-fetch the bundle and return it to show its updated
+                Get-TaniumProvisionBundle -ID $ID
+            }
+        }
+    }
+}
+
+function Get-TaniumProvisionEndpoint
+{
+<#
+.SYNOPSIS
+    Gets one or more Tanium Provision endpoints.
+ 
+.DESCRIPTION
+    Gets one or more Tanium Provision endpoints.
+ 
+.PARAMETER ID
+    The endpoint to be retrieved.
+
+.EXAMPLE
+    Get-TaniumProvisionEndpoint
+
+.EXAMPLE
+    Get-TaniumProvisionEndpoint -ID 11
+
+.OUTPUTS
+    One or more Tanium Provision endpoint objects.
+  
+#>
+
+    [cmdletbinding()]  
+    Param(
+        [Parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true)]
+        [Int32] $ID = -1
+    )
+
+    Process {
+        if ($ID -ne -1) {
+            $uri = "$TPURI/plugin/products/provision/v1/pxe-endpoints/$ID"
+        } else {
+            $uri = "$TPURI/plugin/products/provision/v1/pxe-endpoints"
+        }
+        $response = Invoke-WebRequest -Uri $uri -Method GET -ContentType "application/json" -UseBasicParsing -Headers @{
+            session = $TPTOKEN
+        }
+        $json = $response | ConvertFrom-Json
+        if ($ID -ne -1) {
+            $json
+        } else {
+            $json.configurations
+        }
+    }
+
+}
+
+function Set-TaniumProvisionEndpoint
+{
+<#
+.SYNOPSIS
+    Modifies the specified Tanium Provision endpoint.
+ 
+.DESCRIPTION
+    Modifies the specified Tanium Provision endpoint.
+ 
+.PARAMETER ID
+    The endpoint ID to be modified.
+
+.PARAMETER RemoveBundle
+    The OS bundle ID to be removed from the Tanium Provision endpoint.
+
+.PARAMETER AddBundle
+    The OS bundle ID to be added to the Tanium Provision endpoint.
+
+.EXAMPLE
+    Set-TaniumProvisionEndpoint -ID 11 -RemoveBundle 80
+
+.EXAMPLE
+    Get-TaniumProvisionEndpoint -ID 11 -AddBundle 80
+
+.OUTPUTS
+    The modified Tanium Provision endpoint objects.
+  
+#>
+
+    [cmdletbinding()]  
+    Param(
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [Int32] $ID,
+        [Parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true)]
+        [String] $AddBundle = "",
+        [Parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true)]
+        [String] $RemoveBundle = ""
+    )
+
+    Process {
+        # Update the list of bundles
+        $endpoint = Get-TaniumProvisionEndpoint -ID $ID
+        $newBundles = @()
+        if ($AddBundle -ne "") {
+            $newBundles += $AddBundle
+        }
+        $endpoint.bundle_ids | ForEach-Object {
+            if ($_ -ne $RemoveBundle) {
+                $newBundles += $_
+            }
+        }
+        $endpoint.bundle_ids = $newBundles
+        $body = $endpoint | ConvertTo-Json
+        # Post the changes
+        $uri = "$TPURI/plugin/products/provision/v1/pxe-endpoints/$ID"
+        $response = Invoke-WebRequest -Uri $uri -Method PUT -ContentType "application/json" -UseBasicParsing -Body $body -Headers @{
+            session = $TPTOKEN
+        }
+        # Re-fetch the endpoint and return it to show its updated
+        Get-TaniumProvisionEndpoint -ID $ID
+    }
+}
+
+# SIG # Begin signature block
+# MIInKwYJKoZIhvcNAQcCoIInHDCCJxgCAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
+# gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUoD9Kj9zYX8H1h2+z+2r4Q07E
+# 4waggiDNMIIFjTCCBHWgAwIBAgIQDpsYjvnQLefv21DiCEAYWjANBgkqhkiG9w0B
+# AQwFADBlMQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYD
+# VQQLExB3d3cuZGlnaWNlcnQuY29tMSQwIgYDVQQDExtEaWdpQ2VydCBBc3N1cmVk
+# IElEIFJvb3QgQ0EwHhcNMjIwODAxMDAwMDAwWhcNMzExMTA5MjM1OTU5WjBiMQsw
+# CQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cu
+# ZGlnaWNlcnQuY29tMSEwHwYDVQQDExhEaWdpQ2VydCBUcnVzdGVkIFJvb3QgRzQw
+# ggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQC/5pBzaN675F1KPDAiMGkz
+# 7MKnJS7JIT3yithZwuEppz1Yq3aaza57G4QNxDAf8xukOBbrVsaXbR2rsnnyyhHS
+# 5F/WBTxSD1Ifxp4VpX6+n6lXFllVcq9ok3DCsrp1mWpzMpTREEQQLt+C8weE5nQ7
+# bXHiLQwb7iDVySAdYyktzuxeTsiT+CFhmzTrBcZe7FsavOvJz82sNEBfsXpm7nfI
+# SKhmV1efVFiODCu3T6cw2Vbuyntd463JT17lNecxy9qTXtyOj4DatpGYQJB5w3jH
+# trHEtWoYOAMQjdjUN6QuBX2I9YI+EJFwq1WCQTLX2wRzKm6RAXwhTNS8rhsDdV14
+# Ztk6MUSaM0C/CNdaSaTC5qmgZ92kJ7yhTzm1EVgX9yRcRo9k98FpiHaYdj1ZXUJ2
+# h4mXaXpI8OCiEhtmmnTK3kse5w5jrubU75KSOp493ADkRSWJtppEGSt+wJS00mFt
+# 6zPZxd9LBADMfRyVw4/3IbKyEbe7f/LVjHAsQWCqsWMYRJUadmJ+9oCw++hkpjPR
+# iQfhvbfmQ6QYuKZ3AeEPlAwhHbJUKSWJbOUOUlFHdL4mrLZBdd56rF+NP8m800ER
+# ElvlEFDrMcXKchYiCd98THU/Y+whX8QgUWtvsauGi0/C1kVfnSD8oR7FwI+isX4K
+# Jpn15GkvmB0t9dmpsh3lGwIDAQABo4IBOjCCATYwDwYDVR0TAQH/BAUwAwEB/zAd
+# BgNVHQ4EFgQU7NfjgtJxXWRM3y5nP+e6mK4cD08wHwYDVR0jBBgwFoAUReuir/SS
+# y4IxLVGLp6chnfNtyA8wDgYDVR0PAQH/BAQDAgGGMHkGCCsGAQUFBwEBBG0wazAk
+# BggrBgEFBQcwAYYYaHR0cDovL29jc3AuZGlnaWNlcnQuY29tMEMGCCsGAQUFBzAC
+# hjdodHRwOi8vY2FjZXJ0cy5kaWdpY2VydC5jb20vRGlnaUNlcnRBc3N1cmVkSURS
+# b290Q0EuY3J0MEUGA1UdHwQ+MDwwOqA4oDaGNGh0dHA6Ly9jcmwzLmRpZ2ljZXJ0
+# LmNvbS9EaWdpQ2VydEFzc3VyZWRJRFJvb3RDQS5jcmwwEQYDVR0gBAowCDAGBgRV
+# HSAAMA0GCSqGSIb3DQEBDAUAA4IBAQBwoL9DXFXnOF+go3QbPbYW1/e/Vwe9mqyh
+# hyzshV6pGrsi+IcaaVQi7aSId229GhT0E0p6Ly23OO/0/4C5+KH38nLeJLxSA8hO
+# 0Cre+i1Wz/n096wwepqLsl7Uz9FDRJtDIeuWcqFItJnLnU+nBgMTdydE1Od/6Fmo
+# 8L8vC6bp8jQ87PcDx4eo0kxAGTVGamlUsLihVo7spNU96LHc/RzY9HdaXFSMb++h
+# UD38dglohJ9vytsgjTVgHAIDyyCwrFigDkBjxZgiwbJZ9VVrzyerbHbObyMt9H5x
+# aiNrIv8SuFQtJ37YOtnwtoeW/VvRXKwYw02fc7cBqZ9Xql4o4rmUMIIGsDCCBJig
+# AwIBAgIQCK1AsmDSnEyfXs2pvZOu2TANBgkqhkiG9w0BAQwFADBiMQswCQYDVQQG
+# EwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cuZGlnaWNl
+# cnQuY29tMSEwHwYDVQQDExhEaWdpQ2VydCBUcnVzdGVkIFJvb3QgRzQwHhcNMjEw
+# NDI5MDAwMDAwWhcNMzYwNDI4MjM1OTU5WjBpMQswCQYDVQQGEwJVUzEXMBUGA1UE
+# ChMORGlnaUNlcnQsIEluYy4xQTA/BgNVBAMTOERpZ2lDZXJ0IFRydXN0ZWQgRzQg
+# Q29kZSBTaWduaW5nIFJTQTQwOTYgU0hBMzg0IDIwMjEgQ0ExMIICIjANBgkqhkiG
+# 9w0BAQEFAAOCAg8AMIICCgKCAgEA1bQvQtAorXi3XdU5WRuxiEL1M4zrPYGXcMW7
+# xIUmMJ+kjmjYXPXrNCQH4UtP03hD9BfXHtr50tVnGlJPDqFX/IiZwZHMgQM+TXAk
+# ZLON4gh9NH1MgFcSa0OamfLFOx/y78tHWhOmTLMBICXzENOLsvsI8IrgnQnAZaf6
+# mIBJNYc9URnokCF4RS6hnyzhGMIazMXuk0lwQjKP+8bqHPNlaJGiTUyCEUhSaN4Q
+# vRRXXegYE2XFf7JPhSxIpFaENdb5LpyqABXRN/4aBpTCfMjqGzLmysL0p6MDDnSl
+# rzm2q2AS4+jWufcx4dyt5Big2MEjR0ezoQ9uo6ttmAaDG7dqZy3SvUQakhCBj7A7
+# CdfHmzJawv9qYFSLScGT7eG0XOBv6yb5jNWy+TgQ5urOkfW+0/tvk2E0XLyTRSiD
+# NipmKF+wc86LJiUGsoPUXPYVGUztYuBeM/Lo6OwKp7ADK5GyNnm+960IHnWmZcy7
+# 40hQ83eRGv7bUKJGyGFYmPV8AhY8gyitOYbs1LcNU9D4R+Z1MI3sMJN2FKZbS110
+# YU0/EpF23r9Yy3IQKUHw1cVtJnZoEUETWJrcJisB9IlNWdt4z4FKPkBHX8mBUHOF
+# ECMhWWCKZFTBzCEa6DgZfGYczXg4RTCZT/9jT0y7qg0IU0F8WD1Hs/q27IwyCQLM
+# bDwMVhECAwEAAaOCAVkwggFVMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYE
+# FGg34Ou2O/hfEYb7/mF7CIhl9E5CMB8GA1UdIwQYMBaAFOzX44LScV1kTN8uZz/n
+# upiuHA9PMA4GA1UdDwEB/wQEAwIBhjATBgNVHSUEDDAKBggrBgEFBQcDAzB3Bggr
+# BgEFBQcBAQRrMGkwJAYIKwYBBQUHMAGGGGh0dHA6Ly9vY3NwLmRpZ2ljZXJ0LmNv
+# bTBBBggrBgEFBQcwAoY1aHR0cDovL2NhY2VydHMuZGlnaWNlcnQuY29tL0RpZ2lD
+# ZXJ0VHJ1c3RlZFJvb3RHNC5jcnQwQwYDVR0fBDwwOjA4oDagNIYyaHR0cDovL2Ny
+# bDMuZGlnaWNlcnQuY29tL0RpZ2lDZXJ0VHJ1c3RlZFJvb3RHNC5jcmwwHAYDVR0g
+# BBUwEzAHBgVngQwBAzAIBgZngQwBBAEwDQYJKoZIhvcNAQEMBQADggIBADojRD2N
+# CHbuj7w6mdNW4AIapfhINPMstuZ0ZveUcrEAyq9sMCcTEp6QRJ9L/Z6jfCbVN7w6
+# XUhtldU/SfQnuxaBRVD9nL22heB2fjdxyyL3WqqQz/WTauPrINHVUHmImoqKwba9
+# oUgYftzYgBoRGRjNYZmBVvbJ43bnxOQbX0P4PpT/djk9ntSZz0rdKOtfJqGVWEjV
+# Gv7XJz/9kNF2ht0csGBc8w2o7uCJob054ThO2m67Np375SFTWsPK6Wrxoj7bQ7gz
+# yE84FJKZ9d3OVG3ZXQIUH0AzfAPilbLCIXVzUstG2MQ0HKKlS43Nb3Y3LIU/Gs4m
+# 6Ri+kAewQ3+ViCCCcPDMyu/9KTVcH4k4Vfc3iosJocsL6TEa/y4ZXDlx4b6cpwoG
+# 1iZnt5LmTl/eeqxJzy6kdJKt2zyknIYf48FWGysj/4+16oh7cGvmoLr9Oj9FpsTo
+# FpFSi0HASIRLlk2rREDjjfAVKM7t8RhWByovEMQMCGQ8M4+uKIw8y4+ICw2/O/TO
+# HnuO77Xry7fwdxPm5yg/rBKupS8ibEH5glwVZsxsDsrFhsP2JjMMB0ug0wcCampA
+# MEhLNKhRILutG4UI4lkNbcoFUCvqShyepf2gpx8GdOfy1lKQ/a+FSCH5Vzu0nAPt
+# hkX0tGFuv2jiJmCG6sivqf6UHedjGzqGVnhOMIIGtDCCBJygAwIBAgIQDcesVwX/
+# IZkuQEMiDDpJhjANBgkqhkiG9w0BAQsFADBiMQswCQYDVQQGEwJVUzEVMBMGA1UE
+# ChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cuZGlnaWNlcnQuY29tMSEwHwYD
+# VQQDExhEaWdpQ2VydCBUcnVzdGVkIFJvb3QgRzQwHhcNMjUwNTA3MDAwMDAwWhcN
+# MzgwMTE0MjM1OTU5WjBpMQswCQYDVQQGEwJVUzEXMBUGA1UEChMORGlnaUNlcnQs
+# IEluYy4xQTA/BgNVBAMTOERpZ2lDZXJ0IFRydXN0ZWQgRzQgVGltZVN0YW1waW5n
+# IFJTQTQwOTYgU0hBMjU2IDIwMjUgQ0ExMIICIjANBgkqhkiG9w0BAQEFAAOCAg8A
+# MIICCgKCAgEAtHgx0wqYQXK+PEbAHKx126NGaHS0URedTa2NDZS1mZaDLFTtQ2oR
+# jzUXMmxCqvkbsDpz4aH+qbxeLho8I6jY3xL1IusLopuW2qftJYJaDNs1+JH7Z+Qd
+# SKWM06qchUP+AbdJgMQB3h2DZ0Mal5kYp77jYMVQXSZH++0trj6Ao+xh/AS7sQRu
+# QL37QXbDhAktVJMQbzIBHYJBYgzWIjk8eDrYhXDEpKk7RdoX0M980EpLtlrNyHw0
+# Xm+nt5pnYJU3Gmq6bNMI1I7Gb5IBZK4ivbVCiZv7PNBYqHEpNVWC2ZQ8BbfnFRQV
+# ESYOszFI2Wv82wnJRfN20VRS3hpLgIR4hjzL0hpoYGk81coWJ+KdPvMvaB0WkE/2
+# qHxJ0ucS638ZxqU14lDnki7CcoKCz6eum5A19WZQHkqUJfdkDjHkccpL6uoG8pbF
+# 0LJAQQZxst7VvwDDjAmSFTUms+wV/FbWBqi7fTJnjq3hj0XbQcd8hjj/q8d6ylgx
+# CZSKi17yVp2NL+cnT6Toy+rN+nM8M7LnLqCrO2JP3oW//1sfuZDKiDEb1AQ8es9X
+# r/u6bDTnYCTKIsDq1BtmXUqEG1NqzJKS4kOmxkYp2WyODi7vQTCBZtVFJfVZ3j7O
+# gWmnhFr4yUozZtqgPrHRVHhGNKlYzyjlroPxul+bgIspzOwbtmsgY1MCAwEAAaOC
+# AV0wggFZMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFO9vU0rp5AZ8esri
+# kFb2L9RJ7MtOMB8GA1UdIwQYMBaAFOzX44LScV1kTN8uZz/nupiuHA9PMA4GA1Ud
+# DwEB/wQEAwIBhjATBgNVHSUEDDAKBggrBgEFBQcDCDB3BggrBgEFBQcBAQRrMGkw
+# JAYIKwYBBQUHMAGGGGh0dHA6Ly9vY3NwLmRpZ2ljZXJ0LmNvbTBBBggrBgEFBQcw
+# AoY1aHR0cDovL2NhY2VydHMuZGlnaWNlcnQuY29tL0RpZ2lDZXJ0VHJ1c3RlZFJv
+# b3RHNC5jcnQwQwYDVR0fBDwwOjA4oDagNIYyaHR0cDovL2NybDMuZGlnaWNlcnQu
+# Y29tL0RpZ2lDZXJ0VHJ1c3RlZFJvb3RHNC5jcmwwIAYDVR0gBBkwFzAIBgZngQwB
+# BAIwCwYJYIZIAYb9bAcBMA0GCSqGSIb3DQEBCwUAA4ICAQAXzvsWgBz+Bz0RdnEw
+# vb4LyLU0pn/N0IfFiBowf0/Dm1wGc/Do7oVMY2mhXZXjDNJQa8j00DNqhCT3t+s8
+# G0iP5kvN2n7Jd2E4/iEIUBO41P5F448rSYJ59Ib61eoalhnd6ywFLerycvZTAz40
+# y8S4F3/a+Z1jEMK/DMm/axFSgoR8n6c3nuZB9BfBwAQYK9FHaoq2e26MHvVY9gCD
+# A/JYsq7pGdogP8HRtrYfctSLANEBfHU16r3J05qX3kId+ZOczgj5kjatVB+NdADV
+# ZKON/gnZruMvNYY2o1f4MXRJDMdTSlOLh0HCn2cQLwQCqjFbqrXuvTPSegOOzr4E
+# Wj7PtspIHBldNE2K9i697cvaiIo2p61Ed2p8xMJb82Yosn0z4y25xUbI7GIN/TpV
+# fHIqQ6Ku/qjTY6hc3hsXMrS+U0yy+GWqAXam4ToWd2UQ1KYT70kZjE4YtL8Pbzg0
+# c1ugMZyZZd/BdHLiRu7hAWE6bTEm4XYRkA6Tl4KSFLFk43esaUeqGkH/wyW4N7Oi
+# gizwJWeukcyIPbAvjSabnf7+Pu0VrFgoiovRDiyx3zEdmcif/sYQsfch28bZeUz2
+# rtY/9TCA6TD8dC3JE3rYkrhLULy7Dc90G6e8BlqmyIjlgp2+VqsS9/wQD7yFylIz
+# 0scmbKvFoW2jNrbM1pD2T7m3XDCCBtswggTDoAMCAQICEAUwhNZw/55T4+Nt43m5
+# Gd8wDQYJKoZIhvcNAQELBQAwaTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDkRpZ2lD
+# ZXJ0LCBJbmMuMUEwPwYDVQQDEzhEaWdpQ2VydCBUcnVzdGVkIEc0IENvZGUgU2ln
+# bmluZyBSU0E0MDk2IFNIQTM4NCAyMDIxIENBMTAeFw0yNDAyMjIwMDAwMDBaFw0y
+# NzAzMTEyMzU5NTlaMGMxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9ybmlh
+# MRMwEQYDVQQHEwpFbWVyeXZpbGxlMRQwEgYDVQQKEwtUYW5pdW0gSW5jLjEUMBIG
+# A1UEAxMLVGFuaXVtIEluYy4wggGiMA0GCSqGSIb3DQEBAQUAA4IBjwAwggGKAoIB
+# gQC7lrJUu0AkZzeIMeE2vehNweY9dkuA5POlXmazZak5YGF0MPKAE8UbUX2H/SYX
+# u5wD+QtlA/wH37DCdEpz9bZuzsW2NrUI5IDOMTMTeMD+lVOiD04cvwOuIS9khhwH
+# IeUf29YIQXf+CHr8txE1RnEe2gw+B8jO0DvVSi2lFW1c+v92CI4/IviD3BSCWZ1B
+# w38QhCZljJJX07r6AhfNFbk1loLfxzpWMaAZNO0Kdgptlb6nnnvJOFT3dJynimfa
+# xJmg7vVST/xqovV5hzL7r8aOj9HSAhi7+e6x8h1UOdJOXmu4X1yNk5k6kv5AHAZW
+# GM5qHqppxRl/9URXpbBeLFQF9fLaeWI2CoOYPB0LL17wJGZdWU8PoTLZj62D8xTo
+# fqcZVtEntcz31NvatniuUMmAH6BpyDlLYZ4Mob03foeHO5HIothJjW5Akqq4iii2
+# p8buVOwJ9rRNrAE3fMkMbwRTchy4xrU1xUSa/fVzKFDDbvHjLLgTQJmJH8nJSkc4
+# U9kCAwEAAaOCAgMwggH/MB8GA1UdIwQYMBaAFGg34Ou2O/hfEYb7/mF7CIhl9E5C
+# MB0GA1UdDgQWBBQ1+haN5PV3bclXvkWYzpvWS/+uSDA+BgNVHSAENzA1MDMGBmeB
+# DAEEATApMCcGCCsGAQUFBwIBFhtodHRwOi8vd3d3LmRpZ2ljZXJ0LmNvbS9DUFMw
+# DgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMDMIG1BgNVHR8Ega0w
+# gaowU6BRoE+GTWh0dHA6Ly9jcmwzLmRpZ2ljZXJ0LmNvbS9EaWdpQ2VydFRydXN0
+# ZWRHNENvZGVTaWduaW5nUlNBNDA5NlNIQTM4NDIwMjFDQTEuY3JsMFOgUaBPhk1o
+# dHRwOi8vY3JsNC5kaWdpY2VydC5jb20vRGlnaUNlcnRUcnVzdGVkRzRDb2RlU2ln
+# bmluZ1JTQTQwOTZTSEEzODQyMDIxQ0ExLmNybDCBlAYIKwYBBQUHAQEEgYcwgYQw
+# JAYIKwYBBQUHMAGGGGh0dHA6Ly9vY3NwLmRpZ2ljZXJ0LmNvbTBcBggrBgEFBQcw
+# AoZQaHR0cDovL2NhY2VydHMuZGlnaWNlcnQuY29tL0RpZ2lDZXJ0VHJ1c3RlZEc0
+# Q29kZVNpZ25pbmdSU0E0MDk2U0hBMzg0MjAyMUNBMS5jcnQwCQYDVR0TBAIwADAN
+# BgkqhkiG9w0BAQsFAAOCAgEAY5ze5QM40W2mZGsqXNRYyRfSXstetr9wL6agmfTT
+# E7n9cXHQalEQlDcDisEfz9dvm+jqIF1qbWPeusnR/bEbQiPo/cVl9Snd67y5/IE8
+# vuZnvys/5ZDuuMBWwuxxMCfhcnbKGG+ocCjOnu+FV0CmN81uwmKFi+RzbU22fgF7
+# /rQ9PB8FbrZocXsVOvHVTfq0c85p+OTduXvoVGINlTcZu+b7SDQlNI8tkqbqQBAN
+# 32EMUD1fXvkbHAF/Q+Cig7GXngqP5Z738XtZuP6bbp12JvIMgo3eh/2jJ53cJiYt
+# h/u9N1LsX4UOHTn/yDGMLQsm8lCyFXpWNJpzS6Gu71qHji73wXIjljeV+ZjYomtK
+# oWYOAJw5G/wbpWJqbOFadqx45BIb+tNklGK2hMZq5WshzBRSTGPfXeArJn21ZOoG
+# gQUJqencM3cWMTHk+XD4mBcHSMVdLJ64tXbDkmMY+w66WNIJT0TG+SEG30A+8k0M
+# YOKpmoOrZTrm33sc/w/e30wsu+U+D69G3V0yBCmaI80EsmFkw2PSc0iGkHrfK4w0
+# 9mz+osKV9+IKiaCArXK5qWYiivBHvtbDdjuZodFXTNzpBYs4IGxNf0b3d1baWH0N
+# mpAgFgyA9OXeLUf/sV2fuR1HC+PKWjuHosuUT3KDLGzWLAsV3fbSYwhBfeiGcwwE
+# b7QwggbtMIIE1aADAgECAhAKgO8YS43xBYLRxHanlXRoMA0GCSqGSIb3DQEBCwUA
+# MGkxCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5EaWdpQ2VydCwgSW5jLjFBMD8GA1UE
+# AxM4RGlnaUNlcnQgVHJ1c3RlZCBHNCBUaW1lU3RhbXBpbmcgUlNBNDA5NiBTSEEy
+# NTYgMjAyNSBDQTEwHhcNMjUwNjA0MDAwMDAwWhcNMzYwOTAzMjM1OTU5WjBjMQsw
+# CQYDVQQGEwJVUzEXMBUGA1UEChMORGlnaUNlcnQsIEluYy4xOzA5BgNVBAMTMkRp
+# Z2lDZXJ0IFNIQTI1NiBSU0E0MDk2IFRpbWVzdGFtcCBSZXNwb25kZXIgMjAyNSAx
+# MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA0EasLRLGntDqrmBWsytX
+# um9R/4ZwCgHfyjfMGUIwYzKomd8U1nH7C8Dr0cVMF3BsfAFI54um8+dnxk36+jx0
+# Tb+k+87H9WPxNyFPJIDZHhAqlUPt281mHrBbZHqRK71Em3/hCGC5KyyneqiZ7syv
+# FXJ9A72wzHpkBaMUNg7MOLxI6E9RaUueHTQKWXymOtRwJXcrcTTPPT2V1D/+cFll
+# ESviH8YjoPFvZSjKs3SKO1QNUdFd2adw44wDcKgH+JRJE5Qg0NP3yiSyi5MxgU6c
+# ehGHr7zou1znOM8odbkqoK+lJ25LCHBSai25CFyD23DZgPfDrJJJK77epTwMP6eK
+# A0kWa3osAe8fcpK40uhktzUd/Yk0xUvhDU6lvJukx7jphx40DQt82yepyekl4i0r
+# 8OEps/FNO4ahfvAk12hE5FVs9HVVWcO5J4dVmVzix4A77p3awLbr89A90/nWGjXM
+# Gn7FQhmSlIUDy9Z2hSgctaepZTd0ILIUbWuhKuAeNIeWrzHKYueMJtItnj2Q+aTy
+# LLKLM0MheP/9w6CtjuuVHJOVoIJ/DtpJRE7Ce7vMRHoRon4CWIvuiNN1Lk9Y+xZ6
+# 6lazs2kKFSTnnkrT3pXWETTJkhd76CIDBbTRofOsNyEhzZtCGmnQigpFHti58CSm
+# vEyJcAlDVcKacJ+A9/z7eacCAwEAAaOCAZUwggGRMAwGA1UdEwEB/wQCMAAwHQYD
+# VR0OBBYEFOQ7/PIx7f391/ORcWMZUEPPYYzoMB8GA1UdIwQYMBaAFO9vU0rp5AZ8
+# esrikFb2L9RJ7MtOMA4GA1UdDwEB/wQEAwIHgDAWBgNVHSUBAf8EDDAKBggrBgEF
+# BQcDCDCBlQYIKwYBBQUHAQEEgYgwgYUwJAYIKwYBBQUHMAGGGGh0dHA6Ly9vY3Nw
+# LmRpZ2ljZXJ0LmNvbTBdBggrBgEFBQcwAoZRaHR0cDovL2NhY2VydHMuZGlnaWNl
+# cnQuY29tL0RpZ2lDZXJ0VHJ1c3RlZEc0VGltZVN0YW1waW5nUlNBNDA5NlNIQTI1
+# NjIwMjVDQTEuY3J0MF8GA1UdHwRYMFYwVKBSoFCGTmh0dHA6Ly9jcmwzLmRpZ2lj
+# ZXJ0LmNvbS9EaWdpQ2VydFRydXN0ZWRHNFRpbWVTdGFtcGluZ1JTQTQwOTZTSEEy
+# NTYyMDI1Q0ExLmNybDAgBgNVHSAEGTAXMAgGBmeBDAEEAjALBglghkgBhv1sBwEw
+# DQYJKoZIhvcNAQELBQADggIBAGUqrfEcJwS5rmBB7NEIRJ5jQHIh+OT2Ik/bNYul
+# CrVvhREafBYF0RkP2AGr181o2YWPoSHz9iZEN/FPsLSTwVQWo2H62yGBvg7ouCOD
+# wrx6ULj6hYKqdT8wv2UV+Kbz/3ImZlJ7YXwBD9R0oU62PtgxOao872bOySCILdBg
+# hQ/ZLcdC8cbUUO75ZSpbh1oipOhcUT8lD8QAGB9lctZTTOJM3pHfKBAEcxQFoHlt
+# 2s9sXoxFizTeHihsQyfFg5fxUFEp7W42fNBVN4ueLaceRf9Cq9ec1v5iQMWTFQa0
+# xNqItH3CPFTG7aEQJmmrJTV3Qhtfparz+BW60OiMEgV5GWoBy4RVPRwqxv7Mk0Sy
+# 4QHs7v9y69NBqycz0BZwhB9WOfOu/CIJnzkQTwtSSpGGhLdjnQ4eBpjtP+XB3pQC
+# tv4E5UCSDag6+iX8MmB10nfldPF9SVD7weCC3yXZi/uuhqdwkgVxuiMFzGVFwYbQ
+# siGnoa9F5AaAyBjFBtXVLcKtapnMG3VH3EmAp/jsJ3FVF3+d1SVDTmjFjLbNFZUW
+# MXuZyvgLfgyPehwJVxwC+UpX2MSey2ueIu9THFVkT+um1vshETaWyQo8gmBto/m3
+# acaP9QsuLj3FNwFlTxq25+T4QwX9xa6ILs84ZPvmpovq90K8eWyG2N01c4IhSOxq
+# t81nMYIFyDCCBcQCAQEwfTBpMQswCQYDVQQGEwJVUzEXMBUGA1UEChMORGlnaUNl
+# cnQsIEluYy4xQTA/BgNVBAMTOERpZ2lDZXJ0IFRydXN0ZWQgRzQgQ29kZSBTaWdu
+# aW5nIFJTQTQwOTYgU0hBMzg0IDIwMjEgQ0ExAhAFMITWcP+eU+PjbeN5uRnfMAkG
+# BSsOAwIaBQCgeDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJ
+# AzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMCMG
+# CSqGSIb3DQEJBDEWBBSpB0F5+LZugNMZ7E7WOLAmFr7UrTANBgkqhkiG9w0BAQEF
+# AASCAYBwbMaBagKNBkIVzFkmFWYUtRRspdSccPv97I+3LB1qkGJO2G2Zzom/BAAZ
+# 9rTCJ5GdarikT8Il4kxKYy8K+qe02TwOnT844URU2qjuwI4iXgXUUcFxTsOcau/s
+# nkBZckXpeDuyiWQxh2d75POqG8A3oimD/cjG2xG+v1LHR2cGVw6u5kLl6dgkQCSD
+# vn9UN0fwq9Wf8+TGr/CKj1IZsmrKMWGZvnxeoLrUtP968oFsddbJQf3kzAhEUBB3
+# K13uqBMmKGuRXKlCdgOy6EZdYp9/K8gEOvrEXxYrRIhuguqJnlIRxcjNi6RCl+O7
+# +O0/2byN80vjlUr8YdG1LmL6slQxWmoHylAJwONmWk6ahrVxuMcOhxCjFEzzNB0l
+# TEsxl7NeP/buvCzRmZ+gEe0jqNRPvk6XTHVqX+ncSkLkewP1R3u7LEdlnTL2MRlI
+# K/Gn7FnuYD5mPI0IfJc/6FGriJjElFlAQ2tSYQbHPVwRQkBANB4BriQwbeIRoXpV
+# 6X+JuJShggMmMIIDIgYJKoZIhvcNAQkGMYIDEzCCAw8CAQEwfTBpMQswCQYDVQQG
+# EwJVUzEXMBUGA1UEChMORGlnaUNlcnQsIEluYy4xQTA/BgNVBAMTOERpZ2lDZXJ0
+# IFRydXN0ZWQgRzQgVGltZVN0YW1waW5nIFJTQTQwOTYgU0hBMjU2IDIwMjUgQ0Ex
+# AhAKgO8YS43xBYLRxHanlXRoMA0GCWCGSAFlAwQCAQUAoGkwGAYJKoZIhvcNAQkD
+# MQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMjYwNjAxMTgxMDI1WjAvBgkq
+# hkiG9w0BCQQxIgQgZ3ar8HpM37AffjZG3jLKPcpcoBi/YkoSlDZi76zkVg8wDQYJ
+# KoZIhvcNAQEBBQAEggIAQ25pCgaeK9b2tOKu++W4Thrw6UEKcsDiGbxGhh8COTxN
+# /9QccCfL/841MiL9qCrJITKekB7+VIsLRksyLh6LecrAJKI4bBeBbUKWHvtx/QOi
+# AwvBBctDRiPyHDojl56n/PQTmL86/obJA7ur1/UjDBbXhDfnRuCcsPGlYPDoVOC2
+# 7LmHroeSQNnsGS/Yu5Dyh8DdhcI4j5NzSp+Upv/ns+aohMcY/Z0ZNYey9k0UqZqY
+# CrFcdk/cDDkgXZG3JA8Rlde0b8GqgGZNGyCgSBKGwWtpdm9YN0XvQMJrTLjoURsN
+# UriUsH+oIWFPS1EVLYQSIhK8V46H7TQ/0b94WsKGpS/0+tawWFa4TWkJBzlkxzhj
+# 1LesDHcT50FKfQCDAmeU0nRyikp4kPfMCeeNYnTjdakRq9nPWzap59gKn46K9Wsr
+# TJBRvBQqFwPibIp+mqycxL1SUW6qTV5Rtu9+9upsmEYXu84WFSbCeMuvgFa0rOZA
+# TvyTH5Q9XUF0Kt7Wad9Di5OQ2qfyXSVKc5vjScK/alseGo0KuFibDT8iSHd/AGO7
+# MNaM8uxTHpwlfCJW+ihECp1QWxIybiTtmnecopDO0zM27MQsWdhxfiD9V2Hjhip0
+# pvIutxl1hF1/WZevTWURpqvpF1qQ2M4oIQ/tVdYzhdEtuOhcofAUHScP3zbn00U=
+# SIG # End signature block

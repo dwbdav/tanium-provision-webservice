@@ -20,6 +20,7 @@ logs/*
 *.iso
 *.msi
 *.exe
+!TaniumProvisionBundle/WinPE/scripts/TaniumOSD/TaniumOSDProgress_*.exe
 *.zip
 *.7z
 *.cab

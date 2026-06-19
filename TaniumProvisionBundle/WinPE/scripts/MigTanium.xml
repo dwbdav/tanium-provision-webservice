@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<migration urlid="http://www.microsoft.com/migration/1.0/migxmlext/MigTanium">
+
+    <library prefix="MigSysHelper">MigSys.dll</library>
+
+    <!-- Make sure we exclude the Provision folders  -->
+    <component type="Documents" context="UserAndSystem">
+        <displayName>Exclude OSD folders</displayName>
+        <role role="Data"> 
+            <rules> 
+                <unconditionalExclude> 
+                    <objectSet>
+                        <script>MigXmlHelper.GenerateDrivePatterns ("\_t\* [*.*]", "Fixed")</script> 
+                        <script>MigXmlHelper.GenerateDrivePatterns ("\windows\media\* [*.*]", "Fixed")</script> 
+                    </objectSet> 
+                </unconditionalExclude> 
+            </rules> 
+        </role> 
+    </component> 
+
+</migration>
