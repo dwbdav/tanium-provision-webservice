@@ -24,22 +24,24 @@ It does not include:
 - production-specific CSV data
 - runtime logs
 - secret keys
-- WIM, ISO, MSI, application EXE or ZIP payloads
+- WIM, ISO, application installers or ZIP payloads
 - lab bundle content
 
-The signed Python 3.13 installer under `install/` is the only Python runtime
-binary shipped with the repository. Install it manually for all users in
-`C:\Program Files\Python313` before running `install.ps1`.
+The `install/` folder contains the signed x64 installers for Python 3.13, IIS
+URL Rewrite, and Application Request Routing. Install these prerequisites
+manually before running `install.ps1`.
 
 ## Quick Start
 
 1. Copy the repository to the target server, for example `C:\WebService`.
-2. Run `install\python-3.13.13-amd64.exe` manually. Choose an all-users
+2. Install IIS, then run `install\rewrite_amd64_en-US.msi` followed by
+   `install\requestRouter_amd64.msi`.
+3. Run `install\python-3.13.13-amd64.exe` manually. Choose an all-users
    installation in `C:\Program Files\Python313`.
-3. Run `install\install.ps1` from an elevated PowerShell session to create the
+4. Run `install\install.ps1` from an elevated PowerShell session to create the
    virtual environment and install dependencies.
-4. Start the service with `install\StartWebService.ps1`.
-5. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
+5. Start the service with `install\StartWebService.ps1`.
+6. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
 
 ## Runtime Data
 

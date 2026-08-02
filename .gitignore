@@ -51,6 +51,8 @@ logs/*
 *.wim
 *.iso
 *.msi
+!install/rewrite_amd64_en-US.msi
+!install/requestRouter_amd64.msi
 *.exe
 !install/python-3.13.13-amd64.exe
 !TaniumProvisionBundle/WinPE/scripts/TaniumOSD/TaniumOSDProgress_*.exe
