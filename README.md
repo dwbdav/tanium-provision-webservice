@@ -38,16 +38,17 @@ It does not include:
 
 The repository already includes the expected runtime folders:
 
-- `data_csv/` for configuration data, with example CSV headers
+- `data_csv/` for ignored runtime data, with tracked `*.example.csv` templates
 - `logs/` for logs and deployment tracking
 - `.secret_key` for the Flask secret key
 
-The `data_csv/` content is provided as a starter example. Replace it with your own deployment data before production use.
+Copy the required `data_csv/*.example.csv` templates to matching `*.csv` files,
+then populate those ignored runtime files with deployment data.
 Only the `logs/README.md` file is tracked; runtime log files are ignored by Git.
 
 ## CSV Templates
 
-Template headers are available directly in `data_csv/`.
+Template headers are available as `data_csv/*.example.csv`.
 The goal is to copy or clone this repository and keep the expected folder structure ready to use.
 
 ## Security Notes

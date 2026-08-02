@@ -63,6 +63,7 @@ catch {
 # =========================
 $script:GetComputerApi = "$($Config.WsBase)$($Config.GetComputerEndpoint)"
 $script:ListUsedApi = "$($Config.WsBase)$($Config.ListUsedEndpoint)"
+$script:CheckHardwareApi = "$($Config.WsBase)/checkhardware"
 $script:ProgressBmpUrl = "$($Config.WsBase)/file/Provision/logo.bmp"
 $script:ProgressBmpPath = 'C:\_T\TaniumOSD\logo.bmp'
 
@@ -134,6 +135,302 @@ function Write-Log {
       -ContentType 'application/json' `
       -TimeoutSec 10 | Out-Null
   } catch {}
+}
+
+# =========================
+# Hardware compatibility
+# =========================
+function Convert-BytesToDecimalGb {
+    param([Nullable[Int64]]$Bytes)
+
+    if ($null -eq $Bytes -or $Bytes -le 0) {
+        return ''
+    }
+
+    return [int][Math]::Floor(([double]$Bytes / 1000000000))
+}
+
+function Get-HardwareInventory {
+    $model = ''
+    $ramGb = ''
+    $diskGb = ''
+    $cpuCount = ''
+
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        $model = ([string]$cs.Model).Trim()
+        $ramGb = Convert-BytesToDecimalGb -Bytes ([Nullable[Int64]]$cs.TotalPhysicalMemory)
+        if ($cs.NumberOfLogicalProcessors) {
+            $cpuCount = [string][int]$cs.NumberOfLogicalProcessors
+        }
+    } catch {}
+
+    try {
+        $disk = Get-CimInstance Win32_DiskDrive -ErrorAction Stop |
+            Where-Object { $_.Size -and $_.Size -gt 0 } |
+            Sort-Object -Property Size -Descending |
+            Select-Object -First 1
+
+        if ($disk) {
+            $diskGb = Convert-BytesToDecimalGb -Bytes ([Nullable[Int64]]$disk.Size)
+        }
+    } catch {}
+
+    [pscustomobject]@{
+        Model    = $model
+        RamGb    = $ramGb
+        DiskGb   = $diskGb
+        CpuCount = $cpuCount
+    }
+}
+
+function New-Brush {
+    param([byte]$R, [byte]$G, [byte]$B)
+    return New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromRgb($R, $G, $B))
+}
+
+function Show-HardwareIncompatiblePopup {
+    param(
+        [Parameter(Mandatory)][string]$Reason,
+        [string]$Model = '',
+        [string]$RamGb = '',
+        [string]$DiskGb = '',
+        [string]$CpuCount = ''
+    )
+
+    try {
+        Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase
+
+        [xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="Provisioning - Hardware warning"
+        WindowStartupLocation="Manual"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        Background="#0A1222">
+  <Grid Margin="24">
+    <Border Name="Root" Background="#FFEBEB" CornerRadius="12" Padding="28">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Name="Banner" Grid.Row="0" Padding="18" CornerRadius="10" Margin="0,0,0,18" Background="#DC2626">
+          <StackPanel>
+            <TextBlock Name="Hdr" Text="Hardware requirements not met" FontFamily="Segoe UI Semibold" FontSize="42" FontWeight="Bold" Foreground="White"/>
+            <TextBlock Name="Sub" Text="Review the details below. Provisioning will continue after confirmation." FontFamily="Segoe UI" FontSize="20" Margin="0,6,0,0" Foreground="White"/>
+          </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1">
+          <StackPanel>
+            <TextBlock Text="Compatibility details" FontFamily="Segoe UI Semibold" FontSize="26" Margin="0,2,0,8"/>
+            <TextBox Name="IssueDetailsBox"
+                     Height="320"
+                     IsReadOnly="True"
+                     TextWrapping="NoWrap"
+                     AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     FontFamily="Consolas"
+                     FontSize="18"
+                     Padding="10"
+                     BorderThickness="1"
+                     Margin="0,0,0,10"/>
+            <TextBlock Text="Click OK to continue the deployment." FontFamily="Segoe UI" FontSize="24" Margin="0,16,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,18,0,0">
+          <Button Name="OkBtn"
+                  Content="OK"
+                  Width="280"
+                  Height="76"
+                  HorizontalAlignment="Center"
+                  FontFamily="Segoe UI"
+                  FontWeight="SemiBold"
+                  FontSize="30"
+                  IsDefault="True"/>
+        </Grid>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>
+'@
+
+        $reader = New-Object System.Xml.XmlNodeReader $xaml
+        $window = [Windows.Markup.XamlReader]::Load($reader)
+        $details = $window.FindName('IssueDetailsBox')
+        $okBtn = $window.FindName('OkBtn')
+
+        $details.Background = New-Brush 255 244 244
+        $details.BorderBrush = New-Brush 220 38 38
+        $reasonLines = @([string]$Reason -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $detailLines = New-Object System.Collections.Generic.List[string]
+        if ($reasonLines.Count -gt 0) {
+            [void]$detailLines.Add(("Reason : {0}" -f $reasonLines[0]))
+            if ($reasonLines.Count -gt 1) {
+                [void]$detailLines.Add("")
+                [void]$detailLines.Add("Details:")
+                foreach ($line in @($reasonLines | Select-Object -Skip 1)) {
+                    [void]$detailLines.Add((" - {0}" -f $line))
+                }
+            }
+        }
+        else {
+            [void]$detailLines.Add("Reason : hardware incompatible")
+        }
+        [void]$detailLines.Add("")
+        [void]$detailLines.Add(("Model  : {0}" -f $Model))
+        [void]$detailLines.Add(("RAM    : {0} GB" -f $RamGb))
+        [void]$detailLines.Add(("Disk   : {0} GB" -f $DiskGb))
+        [void]$detailLines.Add(("CPU    : {0}" -f $CpuCount))
+        $details.Text = $detailLines -join "`r`n"
+
+        function Close-HardwareWindow {
+            try {
+                if ($window.IsVisible) {
+                    try { $window.DialogResult = $true } catch {}
+                    if ($window.IsVisible) { $window.Close() }
+                }
+            } catch {}
+        }
+
+        $window.WindowState = 'Maximized'
+        $window.Topmost = $true
+        $null = $window.Add_Loaded({ $okBtn.Focus() | Out-Null })
+        $null = $window.Add_KeyDown({
+            if ($_.Key -in 'Escape', 'Enter', 'Return') {
+                Close-HardwareWindow
+            }
+        })
+        $null = $window.Add_SourceInitialized({ [System.Media.SystemSounds]::Hand.Play() })
+        $null = $okBtn.Add_Click({ Close-HardwareWindow })
+        $null = $okBtn.Add_KeyDown({
+            if ($_.Key -in 'Space', 'Enter', 'Return') {
+                Close-HardwareWindow
+            }
+        })
+
+        [void]$window.ShowDialog()
+    }
+    catch {
+        try {
+            $ws = New-Object -ComObject WScript.Shell
+            $null = $ws.Popup("Hardware requirements not met`r`n$Reason`r`nModel: $Model`r`n`r`nProvisioning will continue after confirmation.", 0, 'Provisioning warning', 0x30)
+        } catch {}
+    }
+}
+
+function Get-HardwareFailureDetails {
+    param([object]$Result)
+
+    $details = New-Object System.Collections.Generic.List[string]
+
+    if ($null -eq $Result -or $Result.PSObject.Properties.Name -notcontains 'failures') {
+        return @()
+    }
+
+    foreach ($failure in @($Result.failures)) {
+        if ($null -eq $failure -or $failure.PSObject.Properties.Name -notcontains 'failed') {
+            continue
+        }
+
+        $failed = $failure.failed
+        foreach ($name in @('ram_gb', 'disk_gb', 'cpu_count')) {
+            if ($failed.PSObject.Properties.Name -notcontains $name) {
+                continue
+            }
+
+            $item = $failed.$name
+            if ($null -eq $item) {
+                continue
+            }
+
+            $reasonText = if ($item.PSObject.Properties.Name -contains 'reason') { [string]$item.reason } else { $name }
+            $actual = if ($item.PSObject.Properties.Name -contains 'actual' -and $null -ne $item.actual) { [string]$item.actual } else { 'missing' }
+            $minimum = if ($item.PSObject.Properties.Name -contains 'minimum' -and $null -ne $item.minimum) { [string]$item.minimum } else { 'unknown' }
+
+            switch ($name) {
+                'ram_gb' {
+                    [void]$details.Add(("RAM below minimum: actual={0} GB, required={1} GB" -f $actual, $minimum))
+                }
+                'disk_gb' {
+                    [void]$details.Add(("Disk below minimum: actual={0} GB, required={1} GB" -f $actual, $minimum))
+                }
+                'cpu_count' {
+                    [void]$details.Add(("CPU count below minimum: actual={0}, required={1}" -f $actual, $minimum))
+                }
+                default {
+                    [void]$details.Add($reasonText)
+                }
+            }
+        }
+    }
+
+    return @($details.ToArray() | Select-Object -Unique)
+}
+
+function Invoke-HardwareCompatibilityCheck {
+    $hw = Get-HardwareInventory
+
+    Write-Log ("[INFO] Hardware inventory: Model={0}; RAM={1}GB; Disk={2}GB; CPU={3}" -f `
+        $hw.Model, $hw.RamGb, $hw.DiskGb, $hw.CpuCount)
+
+    $query = @(
+        "serial=$([System.Uri]::EscapeDataString($script:Serial))",
+        "model=$([System.Uri]::EscapeDataString($hw.Model))",
+        "ram_gb=$([System.Uri]::EscapeDataString([string]$hw.RamGb))",
+        "disk_gb=$([System.Uri]::EscapeDataString([string]$hw.DiskGb))",
+        "cpu_count=$([System.Uri]::EscapeDataString([string]$hw.CpuCount))"
+    ) -join '&'
+
+    $url = "$($script:CheckHardwareApi)?$query"
+
+    try {
+        $result = Invoke-RestWithRetry -Method 'GET' -Uri $url -TimeoutSec $Config.Timeout
+    }
+    catch {
+        Write-Log ("[ERROR] Hardware compatibility check failed: {0}" -f $_.Exception.Message)
+        exit 1
+    }
+
+    if ($null -eq $result -or $result.PSObject.Properties.Name -notcontains 'allowed') {
+        Write-Log '[ERROR] Hardware compatibility check returned an invalid response'
+        exit 1
+    }
+
+    if ([bool]$result.allowed) {
+        $matched = ''
+        if ($result.PSObject.Properties.Name -contains 'matched_model_regex') {
+            $matched = [string]$result.matched_model_regex
+        }
+        Write-Log ("[OK] Hardware compatible: Model={0}; Matched={1}; RAM={2}GB; Disk={3}GB; CPU={4}" -f `
+            $hw.Model, $matched, $hw.RamGb, $hw.DiskGb, $hw.CpuCount)
+        return
+    }
+
+    $reason = 'hardware incompatible'
+    if ($result.PSObject.Properties.Name -contains 'reason' -and $result.reason) {
+        $reason = [string]$result.reason
+    }
+    $failureDetails = @(Get-HardwareFailureDetails -Result $result)
+    $popupReason = $reason
+    if ($failureDetails.Count -gt 0) {
+        $popupReason = $reason + "`r`n" + ($failureDetails -join "`r`n")
+    }
+
+    Write-Log ("[WARN] Hardware requirements not met: {0}; Model={1}; RAM={2}GB; Disk={3}GB; CPU={4}" -f `
+        $popupReason, $hw.Model, $hw.RamGb, $hw.DiskGb, $hw.CpuCount)
+    Show-HardwareIncompatiblePopup -Reason $popupReason -Model $hw.Model -RamGb $hw.RamGb -DiskGb $hw.DiskGb -CpuCount $hw.CpuCount
+    Write-Log '[INFO] Hardware warning acknowledged; provisioning continues'
+    return
 }
 
 # =========================
@@ -313,6 +610,25 @@ function Get-UsedLists {
             Timezones = @()
         }
     }
+}
+
+function Add-DefaultLocaleOptions {
+    param([Parameter(Mandatory)][psobject]$Lists)
+
+    $Lists.Keyboards = @(@($Lists.Keyboards) + @('FR-FR', 'EN-US') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -Unique)
+    $Lists.Countries = @(@($Lists.Countries) + @('FR', 'US') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -Unique)
+    $Lists.Languages = @(@($Lists.Languages) + @('fr-FR', 'en-US') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -Unique)
+    $Lists.Timezones = @(@($Lists.Timezones) + @('Romance Standard Time', 'Eastern Standard Time') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Select-Object -Unique)
+
+    return $Lists
 }
 
 # =========================
@@ -780,6 +1096,8 @@ Write-Log 'START PROVISIONING'
 Update-ProgressBitmap
 Write-Log 'STEP 001'
 
+Invoke-HardwareCompatibilityCheck
+
 # Load current computer values from the API.
 $prefill = Get-PrefillFromApi
 $lists = $null
@@ -792,15 +1110,17 @@ if ([string]::IsNullOrWhiteSpace($prefill.Type)) {
     }
 }
 
+if (-not $lists) { $lists = Get-UsedLists }
+$lists = Add-DefaultLocaleOptions -Lists $lists
+
 if ($prefill._Complete -eq $true) {
-    if (-not $lists) { $lists = Get-UsedLists }
     Write-Log '[INFO] WS complete data available -> showing validation dialog with 300s auto-validate timer' -LocalOnly
 
     $defType     = if ($prefill.Type)     { $prefill.Type.ToUpperInvariant()     } else { '' }
-    $defKbd      = if ($prefill.Keyboard) { $prefill.Keyboard.ToUpperInvariant() } else { '' }
-    $defCountry  = if ($prefill.Country)  { $prefill.Country.ToUpperInvariant()  } else { '' }
-    $defLanguage = if ($prefill.Language) { $prefill.Language                    } else { '' }
-    $defTimezone = if ($prefill.Timezone) { $prefill.Timezone                    } else { '' }
+    $defKbd      = if ($prefill.Keyboard) { $prefill.Keyboard.ToUpperInvariant() } else { 'FR-FR' }
+    $defCountry  = if ($prefill.Country)  { $prefill.Country.ToUpperInvariant()  } else { 'FR' }
+    $defLanguage = if ($prefill.Language) { $prefill.Language                    } else { 'fr-FR' }
+    $defTimezone = if ($prefill.Timezone) { $prefill.Timezone                    } else { 'Romance Standard Time' }
 
     $dlgResult, $res = Show-ValidateDialog `
         -DefaultName      $prefill.ComputerName `
@@ -836,7 +1156,6 @@ if ($prefill._Complete -eq $true) {
     }
 }
 else {
-    if (-not $lists) { $lists = Get-UsedLists }
     Write-Log ("[DBG] Types: {0}"      -f (($lists.Types)     -join ', ')) -LocalOnly
     Write-Log ("[DBG] Keyboards: {0}"  -f (($lists.Keyboards) -join ', ')) -LocalOnly
     Write-Log ("[DBG] Countries: {0}"  -f (($lists.Countries) -join ', ')) -LocalOnly
@@ -844,10 +1163,10 @@ else {
     Write-Log ("[DBG] Timezones: {0}"  -f (($lists.Timezones) -join ', ')) -LocalOnly
 
     $defType     = if ($prefill.Type)     { $prefill.Type.ToUpperInvariant()     } else { '' }
-    $defKbd      = if ($prefill.Keyboard) { $prefill.Keyboard.ToUpperInvariant() } else { '' }
-    $defCountry  = if ($prefill.Country)  { $prefill.Country.ToUpperInvariant()  } else { '' }
-    $defLanguage = if ($prefill.Language) { $prefill.Language                    } else { '' }
-    $defTimezone = if ($prefill.Timezone) { $prefill.Timezone                    } else { '' }
+    $defKbd      = if ($prefill.Keyboard) { $prefill.Keyboard.ToUpperInvariant() } else { 'FR-FR' }
+    $defCountry  = if ($prefill.Country)  { $prefill.Country.ToUpperInvariant()  } else { 'FR' }
+    $defLanguage = if ($prefill.Language) { $prefill.Language                    } else { 'fr-FR' }
+    $defTimezone = if ($prefill.Timezone) { $prefill.Timezone                    } else { 'Romance Standard Time' }
 
     $dlgResult, $res = Show-ValidateDialog `
         -DefaultName      $prefill.ComputerName `

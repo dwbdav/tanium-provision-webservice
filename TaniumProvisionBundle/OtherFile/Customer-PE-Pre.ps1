@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 # Source of truth for wsBase used by all Customer*.ps1 scripts
-$WsBase     = 'https://provision.example.local/'
+$WsBase     = 'https://provision.infra-lab.fr/'
 $WsBaseTrim = $WsBase.TrimEnd('/')
 
 $ConfigJsonX  = 'x:\provision\config.json'

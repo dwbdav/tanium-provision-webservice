@@ -1056,6 +1056,14 @@ def _build_drivers_bp():
 
     bp = Blueprint("drivers", __name__)
 
+    def _optional_positive_int_field(name: str) -> str:
+        value = request.form.get(name, "").strip()
+        if not value:
+            return ""
+        if not value.isdigit() or int(value) <= 0:
+            abort(400, f"{name} must be a positive integer")
+        return value
+
 
     # =========================
     # LIST
@@ -1070,7 +1078,10 @@ def _build_drivers_bp():
                   model_regex AS model,
                   os_regex AS osname,
                   url,
-                  bundle_id
+                  bundle_id,
+                  min_ram_gb,
+                  min_disk_gb,
+                  min_cpu_count
                 FROM drivers
                 ORDER BY rowid;
                 """
@@ -1089,6 +1100,9 @@ def _build_drivers_bp():
                 "display_osname": decode_display_text((r["osname"] or "").strip()) or (r["osname"] or "").strip(),
                 "url": (r["url"] or "").strip(),
                 "bundle_id": (r["bundle_id"] or "").strip(),
+                "min_ram_gb": (r["min_ram_gb"] or "").strip(),
+                "min_disk_gb": (r["min_disk_gb"] or "").strip(),
+                "min_cpu_count": (r["min_cpu_count"] or "").strip(),
                 "display_file": (r["url"] or "").strip(),
             }
             normalized["model"] = normalized["model"] or model
@@ -1102,6 +1116,9 @@ def _build_drivers_bp():
                 normalized["url"] or "",
                 normalized["display_file"] or "",
                 normalized["bundle_id"] or "",
+                normalized["min_ram_gb"] or "",
+                normalized["min_disk_gb"] or "",
+                normalized["min_cpu_count"] or "",
                 "regex",
             ]).lower()
             groups.setdefault(model, []).append(normalized)
@@ -1273,6 +1290,47 @@ def _build_drivers_bp():
           color:#991b1b;
           transform:translateY(-1px);
           box-shadow:0 6px 14px rgba(0,0,0,.1);
+        }
+        .drivers-table-wrap{
+          max-height:calc(100vh - 190px);
+          overflow:auto;
+        }
+        .drivers-table{
+          table-layout:auto;
+          width:100%;
+        }
+        .drivers-table th,
+        .drivers-table td{
+          vertical-align:middle;
+        }
+        .driver-text-wrap{
+          overflow-wrap:anywhere;
+          word-break:break-word;
+        }
+        .driver-action-cell{
+          width:72px;
+          min-width:72px;
+        }
+        .driver-compliance-cell{
+          width:180px;
+          min-width:180px;
+        }
+        .driver-bundle-cell{
+          width:90px;
+          min-width:90px;
+          max-width:90px;
+        }
+        @media (max-width: 1300px){
+          .drivers-table th,
+          .drivers-table td{
+            padding-left:1rem!important;
+            padding-right:1rem!important;
+          }
+        }
+        @media (max-width: 1100px){
+          .drivers-table{
+            min-width:980px;
+          }
         }
         .drv-meta{
           font-size:.75rem;
@@ -1787,33 +1845,54 @@ def _build_drivers_bp():
         {% endif %}
 
         <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div class="max-h-[calc(100vh-190px)] overflow-auto">
-            <table id="drivers-table" class="standard-list-table min-w-full table-fixed divide-y divide-slate-200">
+          <div class="drivers-table-wrap">
+            <table id="drivers-table" class="drivers-table standard-list-table min-w-full divide-y divide-slate-200">
               <thead class="sticky top-0 z-10 bg-slate-100/95 backdrop-blur">
                 <tr class="text-left text-xs font-bold uppercase tracking-wide text-slate-500">
-                  <th class="w-[58%] px-6 py-4">Model Regex</th>
-                  <th class="w-[24%] px-6 py-4">OS Regex</th>
-                  <th class="w-[10%] px-6 py-4">Bundle ID</th>
-                  {% if can_modify %}<th class="w-[8%] px-6 py-4 text-right"></th>{% endif %}
+                  <th class="px-6 py-4">Model Regex</th>
+                  <th class="px-6 py-4">OS Regex</th>
+                  <th class="driver-compliance-cell px-6 py-4">Compliance</th>
+                  <th class="driver-bundle-cell px-6 py-4">ID</th>
+                  {% if can_modify %}<th class="driver-action-cell px-6 py-4 text-right"></th>{% endif %}
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 bg-white text-sm">
               {% for row in driver_rows %}
                 <tr class="driver-row odd:bg-white even:bg-slate-50/60 transition hover:bg-sky-50/60" data-search="{{ row.search }}">
                   <td class="px-6 py-3 align-middle">
-                    <div class="font-semibold text-slate-900">
+                    <div class="driver-text-wrap font-semibold text-slate-900">
                       {% if can_modify %}
                       <a class="driver-name-link" href="{{ url_for('drivers.driver_edit', model=row.model, osname=row.osname) }}">{{ row.display_model or row.model }}</a>
                       {% else %}
                       {{ row.display_model or row.model }}
                       {% endif %}
                     </div>
-                    <div class="mt-1 text-xs font-medium text-slate-400">{{ row.display_file if row.display_file else 'Driver package' }}</div>
+                    <div class="driver-text-wrap mt-1 text-xs font-medium text-slate-400">{{ row.display_file if row.display_file else 'Driver package' }}</div>
                   </td>
-                  <td class="px-6 py-3 align-middle">{{ row.display_osname or row.osname or '-' }}</td>
-                  <td class="px-6 py-3 align-middle">{{ row.bundle_id or '-' }}</td>
+                  <td class="driver-text-wrap px-6 py-3 align-middle">{{ row.display_osname or row.osname or '-' }}</td>
+                  <td class="driver-compliance-cell px-6 py-3 align-middle">
+                    <div class="mb-1 inline-flex rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                      {% if row.min_ram_gb or row.min_disk_gb or row.min_cpu_count %}Hardware checks{% else %}Model only{% endif %}
+                    </div>
+                    {% if row.min_ram_gb %}
+                    <div class="text-xs font-semibold text-slate-600">
+                      RAM: {{ row.min_ram_gb }} GB
+                    </div>
+                    {% endif %}
+                    {% if row.min_disk_gb %}
+                    <div class="text-xs font-semibold text-slate-600">
+                      Disk: {{ row.min_disk_gb }} GB
+                    </div>
+                    {% endif %}
+                    {% if row.min_cpu_count %}
+                    <div class="text-xs font-semibold text-slate-600">
+                      CPU: {{ row.min_cpu_count }}
+                    </div>
+                    {% endif %}
+                  </td>
+                  <td class="driver-bundle-cell px-6 py-3 align-middle">{{ row.bundle_id or '-' }}</td>
                   {% if can_modify %}
-                  <td class="px-6 py-3 text-right align-middle">
+                  <td class="driver-action-cell px-6 py-3 text-right align-middle">
                     <form method="post" action="{{ url_for('drivers.driver_delete') }}" class="m-0" onsubmit="return confirm('Delete driver mapping {{ row.model }} / {{ row.osname }} ?');">
                       <input type="hidden" name="model" value="{{ row.model }}">
                       <input type="hidden" name="osname" value="{{ row.osname }}">
@@ -1826,9 +1905,9 @@ def _build_drivers_bp():
                 </tr>
               {% endfor %}
               {% if driver_rows|length == 0 %}
-                <tr><td colspan="{{ 3 if not can_modify else 4 }}" class="text-center text-muted py-4">No driver mapping</td></tr>
+                <tr><td colspan="{{ 4 if not can_modify else 5 }}" class="text-center text-muted py-4">No driver mapping</td></tr>
               {% else %}
-                <tr id="row-empty" style="display:none;"><td colspan="{{ 3 if not can_modify else 4 }}" class="text-center text-muted py-4">No driver mapping matches your search</td></tr>
+                <tr id="row-empty" style="display:none;"><td colspan="{{ 4 if not can_modify else 5 }}" class="text-center text-muted py-4">No driver mapping matches your search</td></tr>
               {% endif %}
               </tbody>
             </table>
@@ -1915,6 +1994,9 @@ def _build_drivers_bp():
             osname   = request.form.get("os_regex", "").strip()
             url = request.form.get("url", "").strip()
             bundle_id = request.form.get("bundle_id", "").strip()
+            min_ram_gb = _optional_positive_int_field("min_ram_gb")
+            min_disk_gb = _optional_positive_int_field("min_disk_gb")
+            min_cpu_count = _optional_positive_int_field("min_cpu_count")
 
             if not (model and osname):
                 abort(400, "missing model/os regex")
@@ -1935,8 +2017,12 @@ def _build_drivers_bp():
                 conn.close()
                 abort(400, "driver mapping already exists")
             conn.execute(
-                "INSERT INTO drivers (model_regex, os_regex, url, bundle_id) VALUES (?, ?, ?, ?);",
-                (model, osname, url, bundle_id),
+                """
+                INSERT INTO drivers
+                  (model_regex, os_regex, url, bundle_id, min_ram_gb, min_disk_gb, min_cpu_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (model, osname, url, bundle_id, min_ram_gb, min_disk_gb, min_cpu_count),
             )
             conn.commit()
             conn.close()
@@ -2004,8 +2090,26 @@ def _build_drivers_bp():
             </div>
           </div>
           <div class="mb-3">
-            <label class="form-label fw-bold">Bundle ID</label>
+            <label class="form-label fw-bold">ID</label>
             <input name="bundle_id" type="text" class="form-control mono" autocomplete="off">
+          </div>
+          <div class="card p-3 mb-3">
+            <h2 class="h5 mb-1">Hardware Compatibility</h2>
+            <div class="form-text mb-3">Checked in WinPE before provisioning starts. Empty fields are not validated.</div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum RAM (GB)</label>
+                <input name="min_ram_gb" type="number" min="1" step="1" class="form-control" autocomplete="off" placeholder="Not detected">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum Disk (GB)</label>
+                <input name="min_disk_gb" type="number" min="1" step="1" class="form-control" autocomplete="off" placeholder="Not detected">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum CPU Count</label>
+                <input name="min_cpu_count" type="number" min="1" step="1" class="form-control" autocomplete="off" placeholder="Not detected">
+              </div>
+            </div>
           </div>
           <div class="d-flex gap-2">
             <button class="btn btn-success" type="submit">Save</button>
@@ -2105,6 +2209,9 @@ def _build_drivers_bp():
             new_os       = request.form.get("os_regex", "").strip()
             new_url = request.form.get("url", "").strip()
             new_bundle_id = request.form.get("bundle_id", "").strip()
+            new_min_ram_gb = _optional_positive_int_field("min_ram_gb")
+            new_min_disk_gb = _optional_positive_int_field("min_disk_gb")
+            new_min_cpu_count = _optional_positive_int_field("min_cpu_count")
 
             if not (new_model and new_os):
                 conn.close()
@@ -2134,10 +2241,23 @@ def _build_drivers_bp():
                 SET model_regex = ?,
                     os_regex = ?,
                     url = ?,
-                    bundle_id = ?
+                    bundle_id = ?,
+                    min_ram_gb = ?,
+                    min_disk_gb = ?,
+                    min_cpu_count = ?
                 WHERE model_regex = ? AND os_regex = ?;
                 """,
-                (new_model, new_os, new_url, new_bundle_id, original_model, original_os),
+                (
+                    new_model,
+                    new_os,
+                    new_url,
+                    new_bundle_id,
+                    new_min_ram_gb,
+                    new_min_disk_gb,
+                    new_min_cpu_count,
+                    original_model,
+                    original_os,
+                ),
             )
             conn.commit()
             conn.close()
@@ -2151,7 +2271,10 @@ def _build_drivers_bp():
               model_regex AS model,
               os_regex AS osname,
               url,
-              bundle_id
+              bundle_id,
+              min_ram_gb,
+              min_disk_gb,
+              min_cpu_count
             FROM drivers
             WHERE model_regex = ? AND os_regex = ?
             LIMIT 1;
@@ -2272,8 +2395,26 @@ def _build_drivers_bp():
             </div>
           </div>
           <div class="mb-3">
-            <label class="form-label fw-bold">Bundle ID</label>
+            <label class="form-label fw-bold">ID</label>
             <input name="bundle_id" type="text" class="form-control mono" value="{{ row.bundle_id or '' }}" autocomplete="off">
+          </div>
+          <div class="card p-3 mb-3">
+            <h2 class="h5 mb-1">Hardware Compatibility</h2>
+            <div class="form-text mb-3">Checked in WinPE before provisioning starts. Empty fields are not validated.</div>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum RAM (GB)</label>
+                <input name="min_ram_gb" type="number" min="1" step="1" class="form-control" value="{{ row.min_ram_gb or '' }}" autocomplete="off" placeholder="Not detected">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum Disk (GB)</label>
+                <input name="min_disk_gb" type="number" min="1" step="1" class="form-control" value="{{ row.min_disk_gb or '' }}" autocomplete="off" placeholder="Not detected">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Minimum CPU Count</label>
+                <input name="min_cpu_count" type="number" min="1" step="1" class="form-control" value="{{ row.min_cpu_count or '' }}" autocomplete="off" placeholder="Not detected">
+              </div>
+            </div>
           </div>
           <div class="d-flex gap-2">
             <button class="btn btn-primary" type="submit">Save</button>
@@ -5198,11 +5339,22 @@ def _build_progress_bp():
         re.IGNORECASE,
     )
 
+    try:
+        from zoneinfo import ZoneInfo
+        DISPLAY_TZ = ZoneInfo("Europe/Paris")
+    except Exception:
+        DISPLAY_TZ = datetime.datetime.now().astimezone().tzinfo
+
 
     def _parse_dt(s: str):
         if not s:
           raise ValueError("Date string is required")
-        return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+        value = str(s).strip()
+        if value.endswith("Z"):
+            utc_dt = datetime.datetime.strptime(value[:-1], "%Y-%m-%d %H:%M:%S")
+            utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
+            return utc_dt.astimezone(DISPLAY_TZ).replace(tzinfo=None)
+        return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
 
 
     def _format_td(td: Optional[datetime.timedelta]) -> str:
@@ -5777,42 +5929,12 @@ def _build_progress_bp():
         role = (session.get("role") or "").strip().lower()
         can_clear = role in ("admin", "operator")
 
-        def ts_desc(item):
+        def start_ts_desc(item):
             _mac, s = item
-            ts = s.get("last_ts")
+            ts = s.get("start_ts") or s.get("last_ts")
             return -(ts.timestamp() if ts else 0)
 
-        session_key = "progress_row_order"
-        existing_order = session.get(session_key)
-        data_items = list(data.items())
-
-        if not isinstance(existing_order, list) or not existing_order:
-            # First display: newest activity first.
-            items = sorted(data_items, key=ts_desc)
-            session[session_key] = [mac for mac, _s in items]
-            session.modified = True
-        else:
-            by_mac = {mac: s for mac, s in data_items}
-            items = []
-            seen = set()
-
-            # Keep previous visual order during refreshes (no yoyo).
-            for mac in existing_order:
-                s = by_mac.get(mac)
-                if s is None:
-                    continue
-                items.append((mac, s))
-                seen.add(mac)
-
-            # New devices are appended (newest first among newcomers).
-            newcomers = [(mac, s) for mac, s in data_items if mac not in seen]
-            newcomers.sort(key=ts_desc)
-            items.extend(newcomers)
-
-            new_order = [mac for mac, _s in items]
-            if new_order != existing_order:
-                session[session_key] = new_order
-                session.modified = True
+        items = sorted(data.items(), key=start_ts_desc)
 
         tmpl = r"""
     <!DOCTYPE html>
@@ -7727,7 +7849,7 @@ def _build_apps_bp():
             <label class="form-label fw-bold">URL folder</label>
             <input id="url-field" type="text" name="url" class="form-control" value="{{ row.url or '' }}" required>
             <button type="button" class="btn btn-outline-info btn-sm mt-2" onclick="openFilePicker()">Browse...</button>
-            <div class="form-text">Ex: https://provision.example.local/file/Deploy/7ZIP</div>
+            <div class="form-text">Ex: https://provision.wuibaille.fr/file/Deploy/7ZIP</div>
           </div>
           <div class="mb-3">
             <label class="form-label fw-bold">Script</label>
@@ -8235,7 +8357,7 @@ def _build_configs_bp():
             <label class="form-label fw-bold">URL folder</label>
             <input id="url-field" type="text" name="url" class="form-control" value="{{ row.url or '' }}" required>
             <button type="button" class="btn btn-outline-info btn-sm mt-2" onclick="openFilePicker()">Browse...</button>
-            <div class="form-text">Ex: https://provision.example.local/file/Packages/Cash-SystemConf/CFG-XXX</div>
+            <div class="form-text">Ex: https://provision.wuibaille.fr/file/Packages/Cash-SystemConf/CFG-XXX</div>
           </div>
           <div class="mb-3">
             <label class="form-label fw-bold">Script</label>
