@@ -28,17 +28,18 @@ It does not include:
 - lab bundle content
 
 The signed Python 3.13 installer under `install/` is the only Python runtime
-binary shipped with the repository. `install.ps1` verifies its SHA-256 before
-using it.
+binary shipped with the repository. Install it manually for all users in
+`C:\Program Files\Python313` before running `install.ps1`.
 
 ## Quick Start
 
 1. Copy the repository to the target server, for example `C:\WebService`.
-2. Run `install\install.ps1` from an elevated PowerShell session. It installs
-   the bundled Python 3.13 runtime when required, creates the virtual
-   environment and installs dependencies.
-3. Start the service with `install\StartWebService.ps1`.
-4. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
+2. Run `install\python-3.13.13-amd64.exe` manually. Choose an all-users
+   installation in `C:\Program Files\Python313`.
+3. Run `install\install.ps1` from an elevated PowerShell session to create the
+   virtual environment and install dependencies.
+4. Start the service with `install\StartWebService.ps1`.
+5. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
 
 ## Runtime Data
 
