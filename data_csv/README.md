@@ -1,13 +1,13 @@
 # data_csv
 
-This folder contains CSV templates used by the Web Service.
+This folder contains a functional sample configuration used by the Web Service.
 
-The tracked `*.example.csv` files contain only the expected headers. Copy each
-required template to the same name without `.example` before starting the
-service, for example `users.example.csv` to `users.csv`.
+The tracked files already use the runtime names expected by the application:
+`apps.csv`, `computers.csv`, `config.csv`, `drivers.csv`, `networks.csv`,
+`postype.csv`, and `users.csv`. No rename or copy step is required.
 
-Runtime `*.csv` files are ignored by Git so production inventory and credentials
-cannot be staged accidentally.
+The sample `users.csv` contains the `admin` account with an empty password.
+Set a password immediately after the first login.
 
-Do not force-add production inventory, serial numbers, credentials, package IDs,
-or internal-only values.
+Other CSV filenames remain ignored. Review changes carefully before publishing
+environment-specific inventory, credentials, package IDs, or internal values.

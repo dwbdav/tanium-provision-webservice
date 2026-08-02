@@ -62,5 +62,11 @@ file/Lab/
 file/apps/
 
 data_csv/*.csv
-!data_csv/*.example.csv
+!data_csv/apps.csv
+!data_csv/computers.csv
+!data_csv/config.csv
+!data_csv/drivers.csv
+!data_csv/networks.csv
+!data_csv/postype.csv
+!data_csv/users.csv
 data_csv/*.lock
