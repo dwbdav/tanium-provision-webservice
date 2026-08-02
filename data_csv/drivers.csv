@@ -1,0 +1,10 @@
+model_regex,os_regex,url,bundle_id,min_ram_gb,min_disk_gb,min_cpu_count
+\bBEETLE\s*/\s*MIII\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\WINCOR NIXDORF\M2\Win10Client~X64~WINCOR NIXDORF~M2_2025_06_V1.exe,,,,
+(?i)virtual,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\WINCOR NIXDORF\M2\Win10Client~X64~WINCOR NIXDORF~M2_2025_06_V1.exe,6,,,
+(?i)\bBEETLE\s+A1x70\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\WINCOR NIXDORF\A1\Win10Client~X64~WINCOR NIXDORF~A1X70_2025_06_V1.exe,,,,
+(?i)\biPOS\s+plus\s+Advanced\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\WINCOR NIXDORF\IPOS+\Win10Client~X64~WINCOR NIXDORF~IPOS+_2025_07_V1.exe,,,,
+(?i)\bBEETLE\s+A2210\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\WINCOR NIXDORF\A2210\Win10Client~X64~WINCOR NIXDORF~A2210.exe,,,,
+(?i)\bHP\s+Engage\s+One\s+Pro\s+AIO\s+System\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\HP\HPEOPAS\Win10Client~X64~HP~HPEOPAS_2023_V1.exe,,,,
+(?i)\bXT[-\s]?6015\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\POSIFLEX\XT6015\WIN10Client~X64~POSIFLEX~XT6015.exe,,,,
+(?i)\bHP\s+Engage\s+One\s+Pro\s+19\.5\s+G2\s+AiO\s+System\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,%DeployRoot%\Applications\DRIVERS\CASHTILLS\HP\HPEOPAS19G2\Win10Client~X64~HP~HPEOPAS19G2_2025_V1.exe,,,,
+(?i)\bHP\s+EliteBook\s+840\s+G2\b,\bWindows\s+10\s+Enterprise\s+LTSC\b,,33,32,,

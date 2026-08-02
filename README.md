@@ -16,11 +16,12 @@ Python Web Service used with Tanium Provision to add MDT-like logic during Windo
 
 ## Repository Content
 
-This repository contains the code, reusable scripts, and example runtime folders.
+This repository contains the code, reusable scripts, and a functional sample
+configuration under the real runtime filenames.
 
 It does not include:
 
-- production CSV data
+- production-specific CSV data
 - runtime logs
 - secret keys
 - WIM, ISO, MSI, application EXE or ZIP payloads
@@ -43,18 +44,19 @@ using it.
 
 The repository already includes the expected runtime folders:
 
-- `data_csv/` for ignored runtime data, with tracked `*.example.csv` templates
+- `data_csv/` with functional sample CSV files under their real names
 - `logs/` for logs and deployment tracking
 - `.secret_key` for the Flask secret key
 
-Copy the required `data_csv/*.example.csv` templates to matching `*.csv` files,
-then populate those ignored runtime files with deployment data.
+No CSV rename or copy step is required. On first login, use the tracked
+`admin` account with an empty password and set a password immediately.
 Only the `logs/README.md` file is tracked; runtime log files are ignored by Git.
 
 ## CSV Templates
 
-Template headers are available as `data_csv/*.example.csv`.
-The goal is to copy or clone this repository and keep the expected folder structure ready to use.
+Functional sample data is available directly as `data_csv/*.csv`. The goal is
+to download or clone this repository and start with the expected folder
+structure and filenames already in place.
 
 ## Security Notes
 
