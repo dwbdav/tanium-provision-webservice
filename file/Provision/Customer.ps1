@@ -333,6 +333,15 @@ function Show-Progress {
   Write-Host $Message
 }
 
+function Set-ProvisionStep {
+  param(
+    [Parameter(Mandatory)][string]$Step,
+    [Parameter(Mandatory)][string]$Label
+  )
+
+  Write-Log ("{0} - {1}" -f $Step, $Label)
+}
+
 # =========================
 # Download
 # =========================
@@ -755,9 +764,9 @@ try {
 } catch {}
 
 if ($pass -eq 1) {
+  Set-ProvisionStep -Step 'STEP 007' -Label 'Init'
   Expand-OtherFiles
 
-  Write-Log 'STEP 007'
 	powercfg.exe /setactive SCHEME_MIN | Out-Null
 
   Write-Log ("[INFO] Context: Type={0}; Country={1}" -f $ctx.Type, $ctx.Country) -LocalOnly
@@ -772,7 +781,6 @@ if ($pass -eq 1) {
     Write-Log ("[ERROR] Setting TYPE environment variable failed: {0}" -f $_.Exception.Message)
   }
 
-  Write-Log 'STEP 008'
 }
 
 function Install-AppsForType {
@@ -1217,6 +1225,7 @@ function Install-Drivers {
 }
 
 try {
+  Set-ProvisionStep -Step 'STEP 008' -Label 'Drivers'
   Show-Progress 'Drivers'
   Install-Drivers
 }
@@ -1224,7 +1233,7 @@ catch {
   Write-Log ("[ERROR] Driver installation failed: {0}" -f $_.Exception.Message)
 }
 
-Write-Log 'STEP 009'
+Set-ProvisionStep -Step 'STEP 009' -Label 'Applications'
 
 if ([string]::IsNullOrWhiteSpace($ctx.Type)) {
   Write-Log '[WARN] No Type provided: skipping applications'
@@ -1236,6 +1245,8 @@ else {
 # =========================
 # Tanium tag
 # =========================
+Set-ProvisionStep -Step 'STEP 010' -Label 'Finalization'
+
 if ([string]::IsNullOrWhiteSpace($ctx.Type)) {
   Write-Log '[WARN] Tanium tag skipped: missing Type'
 }
@@ -1249,9 +1260,7 @@ else {
   }
 }
 
-Write-Log 'STEP 010'
 Show-Progress 'End'
-Write-Log 'END PROVISIONING'
 
 # =========================
 # End-provisionning.ps1
@@ -1269,6 +1278,7 @@ try {
 
   Unblock-File -Path $endPath -ErrorAction SilentlyContinue
 
+  Set-ProvisionStep -Step 'STEP 011' -Label 'Endprovisionning'
   Show-Progress 'Endprovisionning'
   Write-Log '[INFO] Running endprovisionning.ps1' -LocalOnly
 
@@ -1290,3 +1300,5 @@ try {
 catch {
   Write-Log ("[ERROR] Failed to run endprovisionning.ps1: {0}" -f $_.Exception.Message)
 }
+
+Write-Log 'END PROVISIONING'

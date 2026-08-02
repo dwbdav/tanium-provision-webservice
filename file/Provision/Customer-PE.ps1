@@ -7,7 +7,7 @@ $Config = [ordered]@{
 	ConfigJson    = 'X:\provision\config.json'
     LocalLogPath  = 'X:\provision\provision.log'
     TargetConfigJson = 'C:\provision\config.json'
-	TaniumServerIp       = ''
+	TaniumServerIp       = '10.42.129.71'
 	
 	TaniumOSDModulePath    = 'C:\_T\TaniumOSD'
 	TaniumClientModulePath = 'C:\_T\TaniumClient'

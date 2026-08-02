@@ -1,8 +1,13 @@
 # data_csv
 
-This folder contains example CSV files used by the Web Service.
+This folder contains CSV templates used by the Web Service.
 
-The files are provided with minimal headers or sample placeholders so the expected folder structure exists after cloning the repository.
-Before production use, replace the content with your own deployment data.
+The tracked `*.example.csv` files contain only the expected headers. Copy each
+required template to the same name without `.example` before starting the
+service, for example `users.example.csv` to `users.csv`.
 
-Do not commit production inventory, serial numbers, credentials, package IDs, or internal-only values.
+Runtime `*.csv` files are ignored by Git so production inventory and credentials
+cannot be staged accidentally.
+
+Do not force-add production inventory, serial numbers, credentials, package IDs,
+or internal-only values.

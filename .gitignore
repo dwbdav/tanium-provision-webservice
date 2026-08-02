@@ -1,25 +1,58 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.bak
 *.bak-*
+*.bkp
+*.orig
+*.old
+*~
 *.log
+*.pid
+*.session
+*.swp
+*.swo
+*.temp
+*.tmp
 
 .secret_key
 .env
+.env.*
+!.env.example
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 
 logs/*
 !logs/README.md
 
 *.sqlite
+*.sqlite-*
 *.sqlite3
 *.db
+*.db-*
+
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
 
 *.wim
 *.iso
 *.msi
 *.exe
+!install/python-3.13.13-amd64.exe
 !TaniumProvisionBundle/WinPE/scripts/TaniumOSD/TaniumOSDProgress_*.exe
 *.zip
 *.7z
@@ -27,4 +60,7 @@ logs/*
 
 file/Lab/
 file/apps/
-install/python-*.exe
+
+data_csv/*.csv
+!data_csv/*.example.csv
+data_csv/*.lock

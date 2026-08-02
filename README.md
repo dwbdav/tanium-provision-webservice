@@ -23,31 +23,37 @@ It does not include:
 - production CSV data
 - runtime logs
 - secret keys
-- WIM, ISO, MSI, EXE or ZIP payloads
+- WIM, ISO, MSI, application EXE or ZIP payloads
 - lab bundle content
+
+The signed Python 3.13 installer under `install/` is the only Python runtime
+binary shipped with the repository. `install.ps1` verifies its SHA-256 before
+using it.
 
 ## Quick Start
 
 1. Copy the repository to the target server, for example `C:\WebService`.
-2. Install Python.
-3. Run `install\install.ps1` to create the virtual environment and install dependencies.
-4. Start the service with `install\StartWebService.ps1`.
-5. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
+2. Run `install\install.ps1` from an elevated PowerShell session. It installs
+   the bundled Python 3.13 runtime when required, creates the virtual
+   environment and installs dependencies.
+3. Start the service with `install\StartWebService.ps1`.
+4. Open the Web Service on port `12176`, or publish it behind IIS with a reverse proxy.
 
 ## Runtime Data
 
 The repository already includes the expected runtime folders:
 
-- `data_csv/` for configuration data, with example CSV headers
+- `data_csv/` for ignored runtime data, with tracked `*.example.csv` templates
 - `logs/` for logs and deployment tracking
 - `.secret_key` for the Flask secret key
 
-The `data_csv/` content is provided as a starter example. Replace it with your own deployment data before production use.
+Copy the required `data_csv/*.example.csv` templates to matching `*.csv` files,
+then populate those ignored runtime files with deployment data.
 Only the `logs/README.md` file is tracked; runtime log files are ignored by Git.
 
 ## CSV Templates
 
-Template headers are available directly in `data_csv/`.
+Template headers are available as `data_csv/*.example.csv`.
 The goal is to copy or clone this repository and keep the expected folder structure ready to use.
 
 ## Security Notes

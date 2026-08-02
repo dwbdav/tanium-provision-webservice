@@ -575,6 +575,151 @@ def api_getdrivers():
 
 
 # -------------------------------
+# API: checkhardware
+# -------------------------------
+def _coerce_positive_int(value):
+    try:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        number = int(float(text))
+        return number if number > 0 else None
+    except Exception:
+        return None
+
+
+def _check_minimum(label, actual, minimum):
+    minimum_int = _coerce_positive_int(minimum)
+    if minimum_int is None:
+        return None
+
+    actual_int = _coerce_positive_int(actual)
+    if actual_int is None:
+        return {
+            "ok": False,
+            "reason": f"{label} value missing",
+            "actual": None,
+            "minimum": minimum_int,
+        }
+
+    if actual_int < minimum_int:
+        return {
+            "ok": False,
+            "reason": f"{label} below minimum",
+            "actual": actual_int,
+            "minimum": minimum_int,
+        }
+
+    return {
+        "ok": True,
+        "actual": actual_int,
+        "minimum": minimum_int,
+    }
+
+
+@bp.route("/checkhardware", methods=["GET"])
+def api_checkhardware():
+    serial = request.args.get("serial", default="", type=str).strip()
+    model = request.args.get("model", default="", type=str).strip()
+    ram_gb = request.args.get("ram_gb", default="", type=str).strip()
+    disk_gb = request.args.get("disk_gb", default="", type=str).strip()
+    cpu_count = request.args.get("cpu_count", default="", type=str).strip()
+
+    if not model:
+        return jsonify({
+            "allowed": False,
+            "reason": "model missing",
+            "serial": serial,
+            "model": model,
+        }), 200
+
+    conn = get_db()
+    try:
+        candidates = conn.execute(
+            """
+            SELECT
+              model_regex,
+              min_ram_gb,
+              min_disk_gb,
+              min_cpu_count
+            FROM drivers
+            WHERE TRIM(COALESCE(model_regex, '')) <> ''
+            ORDER BY rowid;
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    matched = []
+    invalid_regex = []
+    for cand in candidates:
+        pattern = (cand["model_regex"] or "").strip()
+        try:
+            if re.search(pattern, model, flags=re.IGNORECASE):
+                matched.append(cand)
+        except re.error:
+            invalid_regex.append(pattern)
+
+    if not matched:
+        return jsonify({
+            "allowed": False,
+            "reason": "model not supported",
+            "serial": serial,
+            "model": model,
+            "ram_gb": _coerce_positive_int(ram_gb),
+            "disk_gb": _coerce_positive_int(disk_gb),
+            "cpu_count": _coerce_positive_int(cpu_count),
+            "invalid_regex_count": len(invalid_regex),
+        }), 200
+
+    failures = []
+    for row in matched:
+        checks = {
+            "ram_gb": _check_minimum("RAM", ram_gb, row["min_ram_gb"]),
+            "disk_gb": _check_minimum("Disk", disk_gb, row["min_disk_gb"]),
+            "cpu_count": _check_minimum("CPU count", cpu_count, row["min_cpu_count"]),
+        }
+        failed = {name: result for name, result in checks.items() if result and not result["ok"]}
+
+        if not failed:
+            return jsonify({
+                "allowed": True,
+                "reason": "hardware compatible",
+                "serial": serial,
+                "model": model,
+                "matched_model_regex": row["model_regex"],
+                "ram_gb": _coerce_positive_int(ram_gb),
+                "disk_gb": _coerce_positive_int(disk_gb),
+                "cpu_count": _coerce_positive_int(cpu_count),
+                "requirements": {
+                    "min_ram_gb": _coerce_positive_int(row["min_ram_gb"]),
+                    "min_disk_gb": _coerce_positive_int(row["min_disk_gb"]),
+                    "min_cpu_count": _coerce_positive_int(row["min_cpu_count"]),
+                },
+                "checks": checks,
+            }), 200
+
+        failures.append({
+            "matched_model_regex": row["model_regex"],
+            "checks": checks,
+            "failed": failed,
+        })
+
+    return jsonify({
+        "allowed": False,
+        "reason": "hardware requirements not met",
+        "serial": serial,
+        "model": model,
+        "ram_gb": _coerce_positive_int(ram_gb),
+        "disk_gb": _coerce_positive_int(disk_gb),
+        "cpu_count": _coerce_positive_int(cpu_count),
+        "failures": failures,
+    }), 200
+
+
+# -------------------------------
 # API: message (ingestion logs)
 # -------------------------------
 @bp.route("/message", methods=["POST"])

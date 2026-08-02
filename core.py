@@ -259,6 +259,7 @@ PUBLIC_API_PATHS = {
     "/gettypes",      # GET  deployment type catalog
     "/getdrivers",    # GET  ?name=...&os=...
     "/list_used",     # GET  lists (types/keyboards)
+    "/checkhardware", # GET  hardware compatibility before deployment
     "/tanium/global", # Tanium global webservice probe
     "/tanium/bundle", # Tanium bundle webservice probe
 }
@@ -347,6 +348,42 @@ def _migrate_csv_alias_files():
         except Exception:
             return []
 
+    def _ensure_csv_columns(path: str, expected_columns):
+        if not os.path.exists(path):
+            return
+
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            current_columns = list(reader.fieldnames or [])
+            rows = list(reader)
+
+        if not current_columns:
+            return
+
+        normalized = {c.strip().lower(): c for c in current_columns}
+        missing = [c for c in expected_columns if c.strip().lower() not in normalized]
+        if not missing:
+            return
+
+        final_columns = list(current_columns) + missing
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", newline="", dir=CSV_DIR) as tf:
+                temp_path = tf.name
+                writer = csv.DictWriter(tf, fieldnames=final_columns, extrasaction="ignore")
+                writer.writeheader()
+                for row in rows:
+                    for col in missing:
+                        row[col] = ""
+                    writer.writerow(row)
+            os.replace(temp_path, path)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
     for table_name, csv_base in TABLE_FILE_ALIASES.items():
         old_csv = os.path.join(CSV_DIR, f"{table_name}.csv")
         new_csv = os.path.join(CSV_DIR, f"{csv_base}.csv")
@@ -369,6 +406,11 @@ def _migrate_csv_alias_files():
                     except Exception:
                         pass
                     os.replace(old_csv, new_csv)
+
+    _ensure_csv_columns(
+        os.path.join(CSV_DIR, "drivers.csv"),
+        ["model_regex", "os_regex", "url", "bundle_id", "min_ram_gb", "min_disk_gb", "min_cpu_count"],
+    )
 
 class Row:
     __slots__ = ("_cols", "_vals", "_idx")
@@ -945,7 +987,10 @@ def ensure_db():
               model_regex TEXT NOT NULL,
               os_regex    TEXT NOT NULL,
               url         TEXT NOT NULL,
-              bundle_id   TEXT NOT NULL DEFAULT ''
+              bundle_id   TEXT NOT NULL DEFAULT '',
+              min_ram_gb  TEXT NOT NULL DEFAULT '',
+              min_disk_gb TEXT NOT NULL DEFAULT '',
+              min_cpu_count TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS ix_drv_model_os ON drivers(model_regex, os_regex);
             
@@ -995,6 +1040,24 @@ def ensure_db():
         except Exception:
             conn.execute("ALTER TABLE newcomputer ADD COLUMN timezone TEXT;")
             conn.execute("UPDATE newcomputer SET timezone = '' WHERE timezone IS NULL;")
+
+        try:
+            conn.execute("SELECT min_ram_gb FROM drivers LIMIT 1;")
+        except Exception:
+            conn.execute("ALTER TABLE drivers ADD COLUMN min_ram_gb TEXT;")
+            conn.execute("UPDATE drivers SET min_ram_gb = '' WHERE min_ram_gb IS NULL;")
+
+        try:
+            conn.execute("SELECT min_disk_gb FROM drivers LIMIT 1;")
+        except Exception:
+            conn.execute("ALTER TABLE drivers ADD COLUMN min_disk_gb TEXT;")
+            conn.execute("UPDATE drivers SET min_disk_gb = '' WHERE min_disk_gb IS NULL;")
+
+        try:
+            conn.execute("SELECT min_cpu_count FROM drivers LIMIT 1;")
+        except Exception:
+            conn.execute("ALTER TABLE drivers ADD COLUMN min_cpu_count TEXT;")
+            conn.execute("UPDATE drivers SET min_cpu_count = '' WHERE min_cpu_count IS NULL;")
 
         try:
             conn.execute("SELECT reboot FROM apps LIMIT 1;")
@@ -1089,7 +1152,7 @@ def ensure_computer_placeholder(conn, raw_id: str):
 
 def insert_deploy_log(conn, serial: str, info_text: str):
     norm = normalize_id(serial)
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     is_start = "START PROVISION" in (info_text or "").upper()
 
     if is_start:
@@ -1159,7 +1222,7 @@ def _clean_source_ip(raw: str) -> str:
     """Strip an optional ':port' (and IPv6 brackets) from a source address.
 
     Some proxies put 'ip:port' into X-Forwarded-For, so request.remote_addr can
-    arrive as '10.0.0.12:48438'. ipaddress can't parse that, which would make
+    arrive as '10.42.126.7:48438'. ipaddress can't parse that, which would make
     every such client look blocked. Reduce it to the bare IP here.
     """
     s = (raw or "").strip()
