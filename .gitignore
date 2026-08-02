@@ -52,6 +52,7 @@ logs/*
 *.iso
 *.msi
 *.exe
+!install/python-3.13.13-amd64.exe
 !TaniumProvisionBundle/WinPE/scripts/TaniumOSD/TaniumOSDProgress_*.exe
 *.zip
 *.7z
@@ -59,7 +60,6 @@ logs/*
 
 file/Lab/
 file/apps/
-install/python-*.exe
 
 data_csv/*.csv
 !data_csv/*.example.csv
