@@ -61,7 +61,8 @@ logs/*
 *.cab
 
 file/Lab/
-file/apps/
+!file/apps/
+!file/apps/**
 
 data_csv/*.csv
 !data_csv/apps.csv

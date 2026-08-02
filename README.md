@@ -24,12 +24,16 @@ It does not include:
 - production-specific CSV data
 - runtime logs
 - secret keys
-- WIM, ISO, application installers or ZIP payloads
+- WIM, ISO, unrelated production installers or ZIP payloads
 - lab bundle content
 
 The `install/` folder contains the signed x64 installers for Python 3.13, IIS
 URL Rewrite, and Application Request Routing. Install these prerequisites
 manually before running `install.ps1`.
+
+The `file/apps/` folder contains the functional sample application payloads
+referenced by `data_csv/apps.csv`. The Chrome Enterprise MSI is stored with Git
+LFS because it exceeds GitHub's normal per-file size limit.
 
 ## Quick Start
 
