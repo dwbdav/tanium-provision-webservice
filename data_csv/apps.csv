@@ -1,5 +1,4 @@
 name,url,script,reboot,allowed_countries,blocked_countries,allowed_models
 PostypeGUIstart,https://provision.infra-lab.fr/file/apps/PostypeGUIstart,tanium.cmd,0,,,
-GoogleChromeEnterprise,https://provision.infra-lab.fr/file/apps/GoogleChromeEnterprise,install.cmd,0,,,
 NotepadPlusPlus,https://provision.infra-lab.fr/file/apps/NotepadPlusPlus,install.cmd,0,,,
 VLC,https://provision.infra-lab.fr/file/apps/VLC,install.cmd,0,,,

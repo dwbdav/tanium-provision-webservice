@@ -32,8 +32,7 @@ URL Rewrite, and Application Request Routing. Install these prerequisites
 manually before running `install.ps1`.
 
 The `file/apps/` folder contains the functional sample application payloads
-referenced by `data_csv/apps.csv`. The Chrome Enterprise MSI is stored with Git
-LFS because it exceeds GitHub's normal per-file size limit.
+referenced by `data_csv/apps.csv`.
 
 ## Quick Start
 
