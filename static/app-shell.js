@@ -48,6 +48,15 @@
   }
 
   function inferBasePrefix() {
+    const shellScript = document.querySelector('script[data-app-shell="1"][src*="app-shell.js"]');
+    if (shellScript) {
+      const scriptPath = normalizePath(new URL(shellScript.src, window.location.origin).pathname);
+      const suffix = "/static/app-shell.js";
+      if (scriptPath.endsWith(suffix)) {
+        return scriptPath.slice(0, -suffix.length);
+      }
+    }
+
     const logoutLink = document.querySelector('a[href$="/logout"],a[href*="/logout?"]');
     if (logoutLink) {
       const href = normalizePath(logoutLink.getAttribute("href") || "");
